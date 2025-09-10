@@ -22,27 +22,45 @@ async function hashPassword(password: string) {
   return `${buf.toString("hex")}.${salt}`;
 }
 
-async function comparePasswords(supplied: string, stored: string) {
-  // Handle cases where stored password might not have the salt format (from external API)
-  if (!stored.includes('.')) {
-    // If no salt, do simple comparison (not recommended for production)
-    return supplied === stored;
+async function comparePasswords(supplied: string, stored: string): Promise<boolean> {
+  if (!stored || !supplied) {
+    console.warn('Attempted authentication with empty password');
+    return false; // Never allow empty password authentication
   }
   
-  const [hashed, salt] = stored.split(".");
-  const hashedBuf = Buffer.from(hashed, "hex");
-  const suppliedBuf = (await scryptAsync(supplied, salt, 64)) as Buffer;
-  return timingSafeEqual(hashedBuf, suppliedBuf);
+  // Only handle properly formatted hashed passwords
+  if (!stored.includes('.')) {
+    console.warn('Attempted authentication with non-hashed password format');
+    return false; // No plaintext fallback - all passwords must be properly hashed
+  }
+  
+  try {
+    const [hashed, salt] = stored.split(".");
+    const hashedBuf = Buffer.from(hashed, "hex");
+    const suppliedBuf = (await scryptAsync(supplied, salt, 64)) as Buffer;
+    return timingSafeEqual(hashedBuf, suppliedBuf);
+  } catch (error) {
+    console.error('Password comparison error:', error);
+    return false;
+  }
 }
 
 export function setupAuth(app: Express) {
+  const SESSION_SECRET = process.env.SESSION_SECRET;
+  
+  if (!SESSION_SECRET) {
+    throw new Error('SESSION_SECRET environment variable is required for security');
+  }
+  
   const sessionSettings: session.SessionOptions = {
-    secret: process.env.SESSION_SECRET || "your-secret-key-here",
+    secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     store: storage.sessionStore,
     cookie: {
-      secure: false, // Set to true in production with HTTPS
+      secure: process.env.NODE_ENV === 'production', // Enable secure cookies in production
+      httpOnly: true, // Prevent XSS attacks
+      sameSite: 'lax', // CSRF protection
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
     }
   };
@@ -58,21 +76,43 @@ export function setupAuth(app: Express) {
         console.log(`Attempting login for username: ${username}`);
         const user = await storage.getUserByUsername(username);
         
-        if (!user) {
-          console.log(`User ${username} not found`);
-          return done(null, false, { message: 'User not found' });
+        if (user && user.password === 'EXTERNAL_USER') {
+          // This is an external user, delegate authentication to external API
+          console.log(`External user ${username}, delegating to external API`);
+          const authenticatedUser = await storage.authenticateExternalUser(username, password);
+          
+          if (authenticatedUser) {
+            console.log(`External authentication successful for ${username}`);
+            return done(null, authenticatedUser);
+          } else {
+            console.log(`External authentication failed for ${username}`);
+            return done(null, false, { message: 'Invalid credentials' });
+          }
+        } else if (user) {
+          // This is a local user, use local password verification
+          console.log(`Local user ${username}, checking password`);
+          const isValidPassword = await comparePasswords(password, user.password);
+          
+          if (!isValidPassword) {
+            console.log(`Invalid password for local user ${username}`);
+            return done(null, false, { message: 'Invalid password' });
+          }
+          
+          console.log(`Local login successful for user ${username}`);
+          return done(null, user);
+        } else {
+          // User not found, try external authentication as a fallback
+          console.log(`User ${username} not found locally, trying external authentication`);
+          const authenticatedUser = await storage.authenticateExternalUser(username, password);
+          
+          if (authenticatedUser) {
+            console.log(`External authentication successful for new user ${username}`);
+            return done(null, authenticatedUser);
+          } else {
+            console.log(`User ${username} not found`);
+            return done(null, false, { message: 'User not found' });
+          }
         }
-        
-        console.log(`Found user ${username}, checking password`);
-        const isValidPassword = await comparePasswords(password, user.password);
-        
-        if (!isValidPassword) {
-          console.log(`Invalid password for user ${username}`);
-          return done(null, false, { message: 'Invalid password' });
-        }
-        
-        console.log(`Login successful for user ${username}`);
-        return done(null, user);
       } catch (error) {
         console.error('Login error:', error);
         return done(error);

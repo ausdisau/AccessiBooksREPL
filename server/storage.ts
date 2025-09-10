@@ -18,6 +18,7 @@ export interface IStorage {
   getUserByUsername(username: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  authenticateExternalUser(username: string, password: string): Promise<User | null>;
   sessionStore: session.Store;
 }
 
@@ -46,12 +47,12 @@ interface ExternalUser {
 }
 
 // Transform external user data to our format
-function transformExternalUser(externalUser: ExternalUser, password?: string): User {
+function transformExternalUser(externalUser: ExternalUser, isLocalUser = false, hashedPassword?: string): User {
   return {
     id: externalUser._id,
     username: externalUser.username,
     email: externalUser.email,
-    password: password || '', // We won't store the password from external API
+    password: hashedPassword || (isLocalUser ? '' : 'EXTERNAL_USER'), // Mark external users specially
     firstName: externalUser.firstName || null,
     lastName: externalUser.lastName || null,
     profilePicture: externalUser.profilePicture || null,
@@ -437,7 +438,7 @@ export class ExternalAPIStorage implements IStorage {
           throw new Error('Unexpected registration response format');
         }
         
-        const user = transformExternalUser(externalUser, insertUser.password);
+        const user = transformExternalUser(externalUser, false); // External user, no password stored
         this.localUsers.set(user.id, user);
         return user;
       } else {
@@ -463,6 +464,50 @@ export class ExternalAPIStorage implements IStorage {
       
       this.localUsers.set(id, user);
       return user;
+    }
+  }
+  
+  async authenticateExternalUser(username: string, password: string): Promise<User | null> {
+    try {
+      console.log(`Attempting external authentication for: ${username}`);
+      
+      const payload = {
+        username,
+        password,
+      };
+      
+      const response = await fetch(`${EXTERNAL_API_BASE}/users/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      
+      if (response.ok) {
+        const responseData = await response.json();
+        console.log('External authentication successful:', { username });
+        
+        let externalUser: ExternalUser;
+        if (responseData._id || responseData.id) {
+          externalUser = responseData;
+        } else if (responseData.user) {
+          externalUser = responseData.user;
+        } else if (responseData.data) {
+          externalUser = responseData.data;
+        } else {
+          console.warn('Unexpected external login response format:', responseData);
+          return null;
+        }
+        
+        const user = transformExternalUser(externalUser, false); // External user
+        this.localUsers.set(user.id, user);
+        return user;
+      } else {
+        console.log(`External authentication failed for ${username}`);
+        return null;
+      }
+    } catch (error) {
+      console.warn(`External authentication error for ${username}:`, error);
+      return null;
     }
   }
 }

@@ -1,5 +1,5 @@
 // Based on javascript_auth_all_persistance blueprint - modified for AccessiBooks
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -54,9 +54,15 @@ export default function AuthPage() {
     },
   });
 
-  // Redirect if already logged in
+  // Redirect if already logged in - use useEffect to avoid render-time side effects
+  useEffect(() => {
+    if (user) {
+      setLocation("/");
+    }
+  }, [user, setLocation]);
+  
+  // Show loading while checking authentication
   if (user) {
-    setLocation("/");
     return null;
   }
 
@@ -153,7 +159,11 @@ export default function AuthPage() {
                         />
                       </div>
                       {loginForm.formState.errors.username && (
-                        <p className="text-sm text-destructive">
+                        <p 
+                          className="text-sm text-destructive"
+                          aria-live="polite"
+                          role="alert"
+                        >
                           {loginForm.formState.errors.username.message}
                         </p>
                       )}
@@ -173,7 +183,11 @@ export default function AuthPage() {
                         />
                       </div>
                       {loginForm.formState.errors.password && (
-                        <p className="text-sm text-destructive">
+                        <p 
+                          className="text-sm text-destructive"
+                          aria-live="polite"
+                          role="alert"
+                        >
                           {loginForm.formState.errors.password.message}
                         </p>
                       )}

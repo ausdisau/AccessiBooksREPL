@@ -5,9 +5,21 @@ import { z } from "zod";
 import { setupAuth } from "./auth";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Enable CORS for all routes
+  // Enable CORS for same-origin requests (more secure than wildcard)
   app.use((req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "*");
+    const origin = req.headers.origin;
+    const allowedOrigins = [
+      'http://localhost:5000', // Dev server
+      'https://localhost:5000',
+      process.env.ALLOWED_ORIGIN // Production domain
+    ].filter(Boolean);
+    
+    // Only set CORS headers if origin is in allowlist (never use "*" with credentials)
+    if (origin && allowedOrigins.includes(origin)) {
+      res.header("Access-Control-Allow-Origin", origin);
+      res.header("Access-Control-Allow-Credentials", "true"); // Required for sessions
+    }
+    
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
     
