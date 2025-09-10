@@ -6,6 +6,7 @@ import createMemoryStore from "memorystore";
 const MemoryStore = createMemoryStore(session);
 
 const EXTERNAL_API_BASE = "https://library-management-api-i6if.onrender.com/api";
+const LIBRIVOX_API_BASE = "https://librivox.org/api/feed/audiobooks";
 
 export interface IStorage {
   getBooks(): Promise<Book[]>;
@@ -33,6 +34,37 @@ interface ExternalBook {
   coverImage?: string;
   createdAt?: string;
   updatedAt?: string;
+}
+
+// LibriVox API interfaces
+interface LibriVoxAuthor {
+  id: string;
+  first_name: string;
+  last_name: string;
+  dob?: string;
+  dod?: string;
+}
+
+interface LibriVoxSection {
+  id: string;
+  title: string;
+  listen_url: string;
+  playtime: string;
+  section_number: string;
+}
+
+interface LibriVoxBook {
+  id: string;
+  title: string;
+  description: string;
+  url_zip_file: string;
+  totaltime: string;
+  totaltimesecs: number;
+  authors: LibriVoxAuthor[];
+  sections: LibriVoxSection[];
+  language: string;
+  copyright_year?: string;
+  genres?: string[];
 }
 
 interface ExternalUser {
@@ -74,6 +106,39 @@ function transformExternalBook(externalBook: ExternalBook): Book {
     audioUrl: `${EXTERNAL_API_BASE}/stream/${externalBook._id}`, // Mock audio URL
     genre: externalBook.genre || null,
     publishedYear: externalBook.publishedYear || null,
+    source: "library-api",
+    sourceId: externalBook._id,
+    totalTime: null,
+    language: "English",
+  };
+}
+
+// Function to transform LibriVox API data to our format
+function transformLibriVoxBook(libriVoxBook: LibriVoxBook): Book {
+  const authorNames = libriVoxBook.authors.map(author => 
+    `${author.first_name} ${author.last_name}`.trim()
+  ).join(", ");
+  
+  // Use first section for audio URL, or zip file as fallback
+  const audioUrl = libriVoxBook.sections.length > 0 
+    ? libriVoxBook.sections[0].listen_url 
+    : libriVoxBook.url_zip_file;
+  
+  return {
+    id: `librivox-${libriVoxBook.id}`,
+    title: libriVoxBook.title,
+    author: authorNames || "Unknown Author",
+    narrator: "LibriVox Volunteers", // LibriVox uses volunteer narrators
+    description: libriVoxBook.description || null,
+    duration: libriVoxBook.totaltimesecs || 0,
+    coverImage: `https://archive.org/services/img/${libriVoxBook.id}`, // LibriVox cover images
+    audioUrl: audioUrl,
+    genre: libriVoxBook.genres ? libriVoxBook.genres.join(", ") : "Classic Literature",
+    publishedYear: libriVoxBook.copyright_year ? parseInt(libriVoxBook.copyright_year) : null,
+    source: "librivox",
+    sourceId: libriVoxBook.id,
+    totalTime: libriVoxBook.totaltime,
+    language: libriVoxBook.language || "English",
   };
 }
 
@@ -119,6 +184,10 @@ export class ExternalAPIStorage implements IStorage {
         audioUrl: "https://www.soundjay.com/misc/sounds/bell-ringing-05.wav", // Sample audio for demo
         genre: "Classic Literature",
         publishedYear: 1925,
+        source: "local",
+        sourceId: null,
+        totalTime: "5:33:12",
+        language: "English",
       },
       {
         title: "Dune",
@@ -130,6 +199,10 @@ export class ExternalAPIStorage implements IStorage {
         audioUrl: "https://www.soundjay.com/misc/sounds/bell-ringing-05.wav",
         genre: "Science Fiction",
         publishedYear: 1965,
+        source: "local",
+        sourceId: null,
+        totalTime: "21:02:00",
+        language: "English",
       },
       {
         title: "The Girl with the Dragon Tattoo",
@@ -141,6 +214,10 @@ export class ExternalAPIStorage implements IStorage {
         audioUrl: "https://www.soundjay.com/misc/sounds/bell-ringing-05.wav",
         genre: "Mystery/Thriller",
         publishedYear: 2005,
+        source: "local",
+        sourceId: null,
+        totalTime: "18:14:00",
+        language: "English",
       },
       {
         title: "Atomic Habits",
@@ -152,6 +229,10 @@ export class ExternalAPIStorage implements IStorage {
         audioUrl: "https://www.soundjay.com/misc/sounds/bell-ringing-05.wav",
         genre: "Self-Help",
         publishedYear: 2018,
+        source: "local",
+        sourceId: null,
+        totalTime: "5:35:00",
+        language: "English",
       },
       {
         title: "The Book Thief",
@@ -163,6 +244,10 @@ export class ExternalAPIStorage implements IStorage {
         audioUrl: "https://www.soundjay.com/misc/sounds/bell-ringing-05.wav",
         genre: "Historical Fiction",
         publishedYear: 2005,
+        source: "local",
+        sourceId: null,
+        totalTime: "13:56:00",
+        language: "English",
       },
       {
         title: "Where the Crawdads Sing",
@@ -174,6 +259,10 @@ export class ExternalAPIStorage implements IStorage {
         audioUrl: "https://www.soundjay.com/misc/sounds/bell-ringing-05.wav",
         genre: "Fiction",
         publishedYear: 2018,
+        source: "local",
+        sourceId: null,
+        totalTime: "12:12:00",
+        language: "English",
       },
     ];
 
@@ -184,6 +273,20 @@ export class ExternalAPIStorage implements IStorage {
   }
 
   async getBooks(): Promise<Book[]> {
+    const allBooks: Book[] = [];
+    
+    // Fetch from LibriVox (free audiobooks)
+    try {
+      console.log('Fetching books from LibriVox...');
+      const libriVoxBooks = await this.fetchLibriVoxBooks(30, 0); // Get 30 LibriVox books
+      const transformedLibriVoxBooks = libriVoxBooks.map(transformLibriVoxBook);
+      allBooks.push(...transformedLibriVoxBooks);
+      console.log(`Added ${transformedLibriVoxBooks.length} books from LibriVox`);
+    } catch (error) {
+      console.warn('Failed to fetch from LibriVox, continuing with other sources:', error);
+    }
+    
+    // Fetch from existing external API
     try {
       console.log('Fetching books from external API...');
       const response = await fetchWithTimeout(`${EXTERNAL_API_BASE}/books`);
@@ -193,7 +296,7 @@ export class ExternalAPIStorage implements IStorage {
         console.log('External API response:', JSON.stringify(responseData, null, 2));
         
         // Handle different response formats
-        let externalBooks: ExternalBook[];
+        let externalBooks: ExternalBook[] = [];
         if (Array.isArray(responseData)) {
           externalBooks = responseData;
         } else if (responseData.books && Array.isArray(responseData.books)) {
@@ -202,22 +305,47 @@ export class ExternalAPIStorage implements IStorage {
           externalBooks = responseData.data;
         } else {
           console.warn('Unexpected response format from external API:', responseData);
-          return Array.from(this.fallbackBooks.values());
+          // Don't return early - we might have LibriVox books
         }
         
-        console.log(`Fetched ${externalBooks.length} books from external API`);
-        return externalBooks.map(transformExternalBook);
+        if (externalBooks.length > 0) {
+          const transformedExternalBooks = externalBooks.map(transformExternalBook);
+          allBooks.push(...transformedExternalBooks);
+          console.log(`Added ${transformedExternalBooks.length} books from external API`);
+        }
       } else {
-        console.warn('External API returned error, using fallback data');
-        return Array.from(this.fallbackBooks.values());
+        console.warn('External API returned error, continuing with other sources');
       }
     } catch (error) {
-      console.warn('Failed to fetch from external API, using fallback data:', error);
-      return Array.from(this.fallbackBooks.values());
+      console.warn('Failed to fetch from external API, continuing with other sources:', error);
     }
+    
+    // Add fallback books if we don't have many results
+    if (allBooks.length < 10) {
+      const fallbackBooks = Array.from(this.fallbackBooks.values());
+      allBooks.push(...fallbackBooks);
+      console.log(`Added ${fallbackBooks.length} fallback books`);
+    }
+    
+    console.log(`Total books available: ${allBooks.length}`);
+    return allBooks;
   }
 
   async getBook(id: string): Promise<Book | undefined> {
+    // Check if this is a LibriVox book
+    if (id.startsWith('librivox-')) {
+      try {
+        console.log(`Fetching LibriVox book: ${id}`);
+        const libriVoxBook = await this.getLibriVoxBook(id);
+        if (libriVoxBook) {
+          return transformLibriVoxBook(libriVoxBook);
+        }
+      } catch (error) {
+        console.warn(`Failed to fetch LibriVox book ${id}:`, error);
+      }
+    }
+    
+    // Try external API
     try {
       console.log(`Fetching book ${id} from external API...`);
       const response = await fetchWithTimeout(`${EXTERNAL_API_BASE}/books/${id}`);
@@ -262,6 +390,10 @@ export class ExternalAPIStorage implements IStorage {
       coverImage: insertBook.coverImage ?? null,
       genre: insertBook.genre ?? null,
       publishedYear: insertBook.publishedYear ?? null,
+      source: insertBook.source ?? "local",
+      sourceId: insertBook.sourceId ?? null,
+      totalTime: insertBook.totalTime ?? null,
+      language: insertBook.language ?? "English",
     };
     this.fallbackBooks.set(id, book);
     return book;
@@ -507,6 +639,96 @@ export class ExternalAPIStorage implements IStorage {
       }
     } catch (error) {
       console.warn(`External authentication error for ${username}:`, error);
+      return null;
+    }
+  }
+  
+  // LibriVox API integration methods
+  private async fetchLibriVoxBooks(limit = 50, offset = 0): Promise<LibriVoxBook[]> {
+    try {
+      console.log(`Fetching LibriVox books (limit: ${limit}, offset: ${offset})...`);
+      const url = `${LIBRIVOX_API_BASE}?format=json&extended=1&limit=${limit}&offset=${offset}`;
+      
+      const response = await fetchWithTimeout(url, 10000); // 10 second timeout for LibriVox
+      
+      if (response.ok) {
+        const responseData = await response.json();
+        console.log(`LibriVox API response: ${responseData.books?.length || 0} books`);
+        
+        if (responseData.books && Array.isArray(responseData.books)) {
+          return responseData.books;
+        }
+        return [];
+      } else {
+        console.warn('LibriVox API returned error:', response.status);
+        return [];
+      }
+    } catch (error) {
+      console.warn('Failed to fetch from LibriVox API:', error);
+      return [];
+    }
+  }
+  
+  private async searchLibriVoxBooks(query: string, limit = 20): Promise<LibriVoxBook[]> {
+    try {
+      console.log(`Searching LibriVox for: "${query}"`);
+      
+      // Try searching by title first
+      const titleUrl = `${LIBRIVOX_API_BASE}/title/^${encodeURIComponent(query)}?format=json&extended=1&limit=${limit}`;
+      
+      const response = await fetchWithTimeout(titleUrl, 10000);
+      
+      if (response.ok) {
+        const responseData = await response.json();
+        console.log(`LibriVox title search returned: ${responseData.books?.length || 0} books`);
+        
+        if (responseData.books && Array.isArray(responseData.books) && responseData.books.length > 0) {
+          return responseData.books;
+        }
+      }
+      
+      // If title search doesn't work, try author search
+      const authorUrl = `${LIBRIVOX_API_BASE}/author/^${encodeURIComponent(query)}?format=json&extended=1&limit=${limit}`;
+      
+      const authorResponse = await fetchWithTimeout(authorUrl, 10000);
+      
+      if (authorResponse.ok) {
+        const authorData = await authorResponse.json();
+        console.log(`LibriVox author search returned: ${authorData.books?.length || 0} books`);
+        
+        if (authorData.books && Array.isArray(authorData.books)) {
+          return authorData.books;
+        }
+      }
+      
+      return [];
+    } catch (error) {
+      console.warn('Failed to search LibriVox API:', error);
+      return [];
+    }
+  }
+  
+  private async getLibriVoxBook(id: string): Promise<LibriVoxBook | null> {
+    try {
+      // Extract LibriVox ID from our prefixed ID
+      const librivoxId = id.startsWith('librivox-') ? id.replace('librivox-', '') : id;
+      console.log(`Fetching LibriVox book: ${librivoxId}`);
+      
+      const url = `${LIBRIVOX_API_BASE}?id=${librivoxId}&format=json&extended=1`;
+      
+      const response = await fetchWithTimeout(url, 10000);
+      
+      if (response.ok) {
+        const responseData = await response.json();
+        
+        if (responseData.books && Array.isArray(responseData.books) && responseData.books.length > 0) {
+          return responseData.books[0];
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      console.warn(`Failed to fetch LibriVox book ${id}:`, error);
       return null;
     }
   }

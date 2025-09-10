@@ -14,6 +14,10 @@ export const books = pgTable("books", {
   audioUrl: text("audio_url").notNull(),
   genre: text("genre"),
   publishedYear: integer("published_year"),
+  source: text("source").notNull().default("local"), // Track which API/source this book came from
+  sourceId: text("source_id"), // Original ID from the source API
+  totalTime: text("total_time"), // Human readable duration (e.g., "11:35:00")
+  language: text("language").default("English"),
 });
 
 export const insertBookSchema = createInsertSchema(books).omit({
