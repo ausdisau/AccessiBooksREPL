@@ -4,13 +4,14 @@ import { queryClient } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AccessibilityControls } from "@/components/accessibility-controls";
+import { AccessiBooksLogo } from "@/components/accessibooks-logo";
 import { Library } from "@/pages/library";
 import { Player } from "@/pages/player";
 import { Book } from "@shared/schema";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { useAccessibility } from "@/hooks/use-accessibility";
 import { Button } from "@/components/ui/button";
-import { Headphones, Book as BookIcon, Play } from "lucide-react";
+import { Book as BookIcon, Play } from "lucide-react";
 
 type View = "library" | "player";
 
@@ -50,12 +51,7 @@ function App() {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="flex justify-between items-center h-16">
                 {/* Logo */}
-                <div className="flex items-center">
-                  <h1 className="text-2xl font-bold text-primary flex items-center">
-                    <Headphones className="h-8 w-8 mr-2" aria-hidden="true" />
-                    AccessiBooks
-                  </h1>
-                </div>
+                <AccessiBooksLogo />
 
                 {/* Accessibility Controls */}
                 <AccessibilityControls />
