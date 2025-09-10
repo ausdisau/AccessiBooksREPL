@@ -20,6 +20,10 @@ export interface IStorage {
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   authenticateExternalUser(username: string, password: string): Promise<User | null>;
+  
+  // Security
+  validateAudioUrl(url: string): boolean;
+  
   sessionStore: session.Store;
 }
 
@@ -119,10 +123,15 @@ function transformLibriVoxBook(libriVoxBook: LibriVoxBook): Book {
     `${author.first_name} ${author.last_name}`.trim()
   ).join(", ");
   
-  // Use first section for audio URL, or zip file as fallback
+  // Prefer first MP3 section over ZIP file for better streaming compatibility
   const audioUrl = libriVoxBook.sections.length > 0 
     ? libriVoxBook.sections[0].listen_url 
     : libriVoxBook.url_zip_file;
+  
+  // Ensure duration is always a number (LibriVox sometimes returns string)
+  const duration = typeof libriVoxBook.totaltimesecs === 'string' 
+    ? parseInt(libriVoxBook.totaltimesecs) || 0
+    : libriVoxBook.totaltimesecs || 0;
   
   return {
     id: `librivox-${libriVoxBook.id}`,
@@ -130,7 +139,7 @@ function transformLibriVoxBook(libriVoxBook: LibriVoxBook): Book {
     author: authorNames || "Unknown Author",
     narrator: "LibriVox Volunteers", // LibriVox uses volunteer narrators
     description: libriVoxBook.description || null,
-    duration: libriVoxBook.totaltimesecs || 0,
+    duration: duration,
     coverImage: `https://archive.org/services/img/${libriVoxBook.id}`, // LibriVox cover images
     audioUrl: audioUrl,
     genre: libriVoxBook.genres ? libriVoxBook.genres.join(", ") : "Classic Literature",
@@ -156,10 +165,28 @@ async function fetchWithTimeout(url: string, timeout = 5000): Promise<Response> 
   }
 }
 
+// Simple in-memory cache with TTL
+interface CacheEntry<T> {
+  data: T;
+  expires: number;
+}
+
 export class ExternalAPIStorage implements IStorage {
   private fallbackBooks: Map<string, Book>;
   private localUsers: Map<string, User>; // For session management
   public sessionStore: session.Store;
+  private cache: Map<string, CacheEntry<any>> = new Map();
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  
+  // Security: Allowed domains for audio streaming
+  private readonly ALLOWED_AUDIO_DOMAINS = [
+    'librivox.org',
+    'archive.org',
+    'ia801408.us.archive.org', // Internet Archive CDN
+    'ia601408.us.archive.org', // Internet Archive CDN
+    'www.archive.org',
+    'library-management-api-i6if.onrender.com' // External API
+  ];
 
   constructor() {
     this.fallbackBooks = new Map();
@@ -273,52 +300,39 @@ export class ExternalAPIStorage implements IStorage {
   }
 
   async getBooks(): Promise<Book[]> {
+    // Check cache first
+    const cached = this.getCached<Book[]>('all_books');
+    if (cached) {
+      console.log('Returning cached books');
+      return cached;
+    }
+    
     const allBooks: Book[] = [];
     
-    // Fetch from LibriVox (free audiobooks)
-    try {
-      console.log('Fetching books from LibriVox...');
-      const libriVoxBooks = await this.fetchLibriVoxBooks(30, 0); // Get 30 LibriVox books
-      const transformedLibriVoxBooks = libriVoxBooks.map(transformLibriVoxBook);
-      allBooks.push(...transformedLibriVoxBooks);
-      console.log(`Added ${transformedLibriVoxBooks.length} books from LibriVox`);
-    } catch (error) {
-      console.warn('Failed to fetch from LibriVox, continuing with other sources:', error);
-    }
-    
-    // Fetch from existing external API
-    try {
-      console.log('Fetching books from external API...');
-      const response = await fetchWithTimeout(`${EXTERNAL_API_BASE}/books`);
+    // Parallelize API calls for better performance
+    const fetchPromises = [
+      // LibriVox books
+      this.fetchLibriVoxBooks(30, 0).then(books => {
+        const transformed = books.map(transformLibriVoxBook);
+        console.log(`Fetched ${transformed.length} books from LibriVox`);
+        return transformed;
+      }).catch(error => {
+        console.warn('LibriVox fetch failed:', error instanceof Error ? error.message : 'Unknown error');
+        return [];
+      }),
       
-      if (response.ok) {
-        const responseData = await response.json();
-        console.log('External API response:', JSON.stringify(responseData, null, 2));
-        
-        // Handle different response formats
-        let externalBooks: ExternalBook[] = [];
-        if (Array.isArray(responseData)) {
-          externalBooks = responseData;
-        } else if (responseData.books && Array.isArray(responseData.books)) {
-          externalBooks = responseData.books;
-        } else if (responseData.data && Array.isArray(responseData.data)) {
-          externalBooks = responseData.data;
-        } else {
-          console.warn('Unexpected response format from external API:', responseData);
-          // Don't return early - we might have LibriVox books
-        }
-        
-        if (externalBooks.length > 0) {
-          const transformedExternalBooks = externalBooks.map(transformExternalBook);
-          allBooks.push(...transformedExternalBooks);
-          console.log(`Added ${transformedExternalBooks.length} books from external API`);
-        }
-      } else {
-        console.warn('External API returned error, continuing with other sources');
-      }
-    } catch (error) {
-      console.warn('Failed to fetch from external API, continuing with other sources:', error);
-    }
+      // External API books
+      this.fetchExternalAPIBooks().catch(error => {
+        console.warn('External API fetch failed:', error instanceof Error ? error.message : 'Unknown error');
+        return [];
+      })
+    ];
+    
+    // Wait for all API calls to complete
+    const results = await Promise.all(fetchPromises);
+    
+    // Combine all results
+    results.forEach(books => allBooks.push(...books));
     
     // Add fallback books if we don't have many results
     if (allBooks.length < 10) {
@@ -327,8 +341,37 @@ export class ExternalAPIStorage implements IStorage {
       console.log(`Added ${fallbackBooks.length} fallback books`);
     }
     
+    // Cache the result
+    this.setCached('all_books', allBooks);
+    
     console.log(`Total books available: ${allBooks.length}`);
     return allBooks;
+  }
+  
+  private async fetchExternalAPIBooks(): Promise<Book[]> {
+    console.log('Fetching books from external API...');
+    const response = await fetchWithTimeout(`${EXTERNAL_API_BASE}/books`);
+    
+    if (response.ok) {
+      const responseData = await response.json();
+      console.log(`External API summary: ${JSON.stringify({ status: 'success', count: responseData?.books?.length || responseData?.length || 0 })}`);
+      
+      let externalBooks: ExternalBook[] = [];
+      if (Array.isArray(responseData)) {
+        externalBooks = responseData;
+      } else if (responseData.books && Array.isArray(responseData.books)) {
+        externalBooks = responseData.books;
+      } else if (responseData.data && Array.isArray(responseData.data)) {
+        externalBooks = responseData.data;
+      } else {
+        console.warn('Unexpected response format from external API');
+        return [];
+      }
+      
+      return externalBooks.map(transformExternalBook);
+    }
+    
+    return [];
   }
 
   async getBook(id: string): Promise<Book | undefined> {
@@ -400,27 +443,123 @@ export class ExternalAPIStorage implements IStorage {
   }
 
   async searchBooks(query: string): Promise<Book[]> {
-    try {
-      // First try to get all books from external API, then filter
-      const books = await this.getBooks();
-      const lowercaseQuery = query.toLowerCase();
+    const allBooks: Book[] = [];
+    const searchPromises: Promise<Book[]>[] = [];
+    
+    // Parallel search across all sources
+    searchPromises.push(
+      // LibriVox search
+      this.searchLibriVoxBooks(query, 15).then(books => books.map(transformLibriVoxBook)).catch(error => {
+        console.warn('LibriVox search failed:', error);
+        return [];
+      }),
       
-      return books.filter(book => 
-        book.title.toLowerCase().includes(lowercaseQuery) ||
-        book.author.toLowerCase().includes(lowercaseQuery) ||
-        (book.genre && book.genre.toLowerCase().includes(lowercaseQuery))
-      );
-    } catch (error) {
-      console.warn('Failed to search external API, using fallback data:', error);
-      const books = Array.from(this.fallbackBooks.values());
-      const lowercaseQuery = query.toLowerCase();
-      
-      return books.filter(book => 
-        book.title.toLowerCase().includes(lowercaseQuery) ||
-        book.author.toLowerCase().includes(lowercaseQuery) ||
-        (book.genre && book.genre.toLowerCase().includes(lowercaseQuery))
-      );
+      // External API search
+      this.searchExternalAPI(query).catch(error => {
+        console.warn('External API search failed:', error);
+        return [];
+      })
+    );
+    
+    // Wait for all searches to complete
+    const searchResults = await Promise.all(searchPromises);
+    
+    // Flatten and combine results
+    searchResults.forEach(results => allBooks.push(...results));
+    
+    // Add fallback search if we don't have many results
+    if (allBooks.length < 5) {
+      const fallbackResults = this.searchFallbackBooks(query);
+      allBooks.push(...fallbackResults);
+      console.log(`Added ${fallbackResults.length} books from fallback search`);
     }
+    
+    // Basic deduplication by title + author
+    const deduped = this.deduplicateBooks(allBooks);
+    
+    console.log(`Search for "${query}" returned ${deduped.length} results`);
+    return deduped;
+  }
+  
+  private async searchExternalAPI(query: string): Promise<Book[]> {
+    try {
+      console.log(`Searching external API for: ${query}`);
+      const response = await fetchWithTimeout(`${EXTERNAL_API_BASE}/books?search=${encodeURIComponent(query)}`);
+      
+      if (response.ok) {
+        const responseData = await response.json();
+        console.log(`External API search summary: ${JSON.stringify({ status: 'success', count: responseData?.books?.length || responseData?.length || 0 })}`);
+        
+        let externalBooks: ExternalBook[] = [];
+        if (Array.isArray(responseData)) {
+          externalBooks = responseData;
+        } else if (responseData.books && Array.isArray(responseData.books)) {
+          externalBooks = responseData.books;
+        } else if (responseData.data && Array.isArray(responseData.data)) {
+          externalBooks = responseData.data;
+        }
+        
+        return externalBooks.map(transformExternalBook);
+      }
+      return [];
+    } catch (error) {
+      console.warn('External API search error:', error instanceof Error ? error.message : 'Unknown error');
+      return [];
+    }
+  }
+  
+  private deduplicateBooks(books: Book[]): Book[] {
+    const seen = new Set<string>();
+    return books.filter(book => {
+      const key = `${book.title.toLowerCase().trim()}-${book.author.toLowerCase().trim()}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }
+  
+  // Cache management methods
+  private getCached<T>(key: string): T | null {
+    const entry = this.cache.get(key);
+    if (entry && entry.expires > Date.now()) {
+      return entry.data;
+    }
+    if (entry) {
+      this.cache.delete(key); // Remove expired entry
+    }
+    return null;
+  }
+  
+  private setCached<T>(key: string, data: T): void {
+    this.cache.set(key, {
+      data,
+      expires: Date.now() + this.CACHE_TTL
+    });
+  }
+  
+  // Security: Validate audio URL against allowed domains (public method for routes)
+  validateAudioUrl(url: string): boolean {
+    try {
+      const parsedUrl = new URL(url);
+      return this.ALLOWED_AUDIO_DOMAINS.some(domain => 
+        parsedUrl.hostname === domain || parsedUrl.hostname.endsWith('.' + domain)
+      );
+    } catch {
+      return false;
+    }
+  }
+  
+  private searchFallbackBooks(query: string): Book[] {
+    const books = Array.from(this.fallbackBooks.values());
+    const lowercaseQuery = query.toLowerCase();
+    
+    return books.filter(book => 
+      book.title.toLowerCase().includes(lowercaseQuery) ||
+      book.author.toLowerCase().includes(lowercaseQuery) ||
+      (book.genre && book.genre.toLowerCase().includes(lowercaseQuery))
+    );
   }
 
   // User management methods integrating with external API
@@ -673,8 +812,8 @@ export class ExternalAPIStorage implements IStorage {
     try {
       console.log(`Searching LibriVox for: "${query}"`);
       
-      // Try searching by title first
-      const titleUrl = `${LIBRIVOX_API_BASE}/title/^${encodeURIComponent(query)}?format=json&extended=1&limit=${limit}`;
+      // Correct LibriVox API URL format with query parameters
+      const titleUrl = `${LIBRIVOX_API_BASE}?title=^${encodeURIComponent(query)}&format=json&extended=1&limit=${limit}`;
       
       const response = await fetchWithTimeout(titleUrl, 10000);
       
@@ -687,8 +826,8 @@ export class ExternalAPIStorage implements IStorage {
         }
       }
       
-      // If title search doesn't work, try author search
-      const authorUrl = `${LIBRIVOX_API_BASE}/author/^${encodeURIComponent(query)}?format=json&extended=1&limit=${limit}`;
+      // If title search doesn't yield results, try author search
+      const authorUrl = `${LIBRIVOX_API_BASE}?author=^${encodeURIComponent(query)}&format=json&extended=1&limit=${limit}`;
       
       const authorResponse = await fetchWithTimeout(authorUrl, 10000);
       

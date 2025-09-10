@@ -85,9 +85,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Book not found" });
       }
       
-      // Redirect to the actual audio URL
+      // Security: Validate audio URL against allowed domains to prevent SSRF
+      if (!storage.validateAudioUrl(book.audioUrl)) {
+        console.warn(`Blocked potentially unsafe audio URL for book ${id}: ${book.audioUrl}`);
+        return res.status(403).json({ 
+          message: "Audio source not allowed",
+          error: "INVALID_AUDIO_SOURCE"
+        });
+      }
+      
+      // Redirect to the validated audio URL
       res.redirect(302, book.audioUrl);
     } catch (error) {
+      console.error('Streaming error:', error);
       res.status(500).json({ message: "Failed to stream book" });
     }
   });
