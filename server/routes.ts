@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
+import { setupAuth } from "./auth";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Enable CORS for all routes
@@ -16,6 +17,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next();
     }
   });
+
+  // Setup authentication routes: /api/register, /api/login, /api/logout, /api/user
+  setupAuth(app);
 
   // GET /api/books - Get all books
   app.get("/api/books", async (req, res) => {
