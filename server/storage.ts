@@ -7,6 +7,8 @@ const MemoryStore = createMemoryStore(session);
 
 const EXTERNAL_API_BASE = "https://library-management-api-i6if.onrender.com/api";
 const LIBRIVOX_API_BASE = "https://librivox.org/api/feed/audiobooks";
+const OPEN_LIBRARY_API_BASE = "https://openlibrary.org";
+const OPEN_LIBRARY_COVERS_BASE = "https://covers.openlibrary.org";
 
 export interface IStorage {
   getBooks(): Promise<Book[]>;
@@ -38,6 +40,31 @@ interface ExternalBook {
   coverImage?: string;
   createdAt?: string;
   updatedAt?: string;
+}
+
+// Open Library API interfaces
+interface OpenLibraryBook {
+  key: string;
+  title: string;
+  author_name?: string[];
+  author_key?: string[];
+  first_publish_year?: number;
+  isbn?: string[];
+  cover_i?: number;
+  subject?: string[];
+  publisher?: string[];
+  language?: string[];
+  ia?: string[];
+  has_fulltext?: boolean;
+  public_scan_b?: boolean;
+  edition_count?: number;
+}
+
+interface OpenLibrarySearchResponse {
+  numFound: number;
+  start: number;
+  numFoundExact: boolean;
+  docs: OpenLibraryBook[];
 }
 
 // LibriVox API interfaces
@@ -117,6 +144,34 @@ function transformExternalBook(externalBook: ExternalBook): Book {
   };
 }
 
+// Function to transform Open Library API data to our format
+function transformOpenLibraryBook(openLibraryBook: OpenLibraryBook): Book {
+  const author = openLibraryBook.author_name ? openLibraryBook.author_name[0] : "Unknown Author";
+  const coverImage = openLibraryBook.cover_i 
+    ? `${OPEN_LIBRARY_COVERS_BASE}/b/id/${openLibraryBook.cover_i}-M.jpg`
+    : null;
+  
+  // Extract ID from key (e.g., "/works/OL27448W" -> "OL27448W")
+  const olid = openLibraryBook.key.split('/').pop() || openLibraryBook.key;
+  
+  return {
+    id: `openlibrary-${olid}`,
+    title: openLibraryBook.title,
+    author: author,
+    narrator: null, // Open Library doesn't have narrator info
+    description: null, // Basic search doesn't include description
+    duration: 0, // Open Library is for ebooks, not audiobooks
+    coverImage: coverImage,
+    audioUrl: "", // Open Library doesn't provide audio files
+    genre: openLibraryBook.subject ? openLibraryBook.subject[0] : null,
+    publishedYear: openLibraryBook.first_publish_year || null,
+    source: "open-library",
+    sourceId: olid,
+    totalTime: "0:00:00",
+    language: openLibraryBook.language ? openLibraryBook.language[0] : "English",
+  };
+}
+
 // Function to transform LibriVox API data to our format
 function transformLibriVoxBook(libriVoxBook: LibriVoxBook): Book {
   const authorNames = libriVoxBook.authors.map(author => 
@@ -178,14 +233,15 @@ export class ExternalAPIStorage implements IStorage {
   private cache: Map<string, CacheEntry<any>> = new Map();
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   
-  // Security: Allowed domains for audio streaming
+  // Security: Allowed domains for audio streaming and covers
   private readonly ALLOWED_AUDIO_DOMAINS = [
     'librivox.org',
     'archive.org',
     'ia801408.us.archive.org', // Internet Archive CDN
     'ia601408.us.archive.org', // Internet Archive CDN
     'www.archive.org',
-    'library-management-api-i6if.onrender.com' // External API
+    'library-management-api-i6if.onrender.com', // External API
+    'covers.openlibrary.org' // Open Library covers
   ];
 
   constructor() {
@@ -321,6 +377,16 @@ export class ExternalAPIStorage implements IStorage {
         return [];
       }),
       
+      // Open Library books
+      this.fetchOpenLibraryBooks(20).then((books: OpenLibraryBook[]) => {
+        const transformed = books.map(transformOpenLibraryBook);
+        console.log(`Fetched ${transformed.length} books from Open Library`);
+        return transformed;
+      }).catch((error: any) => {
+        console.warn('Open Library fetch failed:', error instanceof Error ? error.message : 'Unknown error');
+        return [];
+      }),
+      
       // External API books
       this.fetchExternalAPIBooks().catch(error => {
         console.warn('External API fetch failed:', error instanceof Error ? error.message : 'Unknown error');
@@ -332,7 +398,7 @@ export class ExternalAPIStorage implements IStorage {
     const results = await Promise.all(fetchPromises);
     
     // Combine all results
-    results.forEach(books => allBooks.push(...books));
+    results.forEach((books: Book[]) => allBooks.push(...books));
     
     // Add fallback books if we don't have many results
     if (allBooks.length < 10) {
@@ -385,6 +451,19 @@ export class ExternalAPIStorage implements IStorage {
         }
       } catch (error) {
         console.warn(`Failed to fetch LibriVox book ${id}:`, error);
+      }
+    }
+    
+    // Check if this is an Open Library book
+    if (id.startsWith('openlibrary-')) {
+      try {
+        console.log(`Fetching Open Library book: ${id}`);
+        const openLibraryBook = await this.getOpenLibraryBook(id);
+        if (openLibraryBook) {
+          return transformOpenLibraryBook(openLibraryBook);
+        }
+      } catch (error) {
+        console.warn(`Failed to fetch Open Library book ${id}:`, error);
       }
     }
     
@@ -451,6 +530,12 @@ export class ExternalAPIStorage implements IStorage {
       // LibriVox search
       this.searchLibriVoxBooks(query, 15).then(books => books.map(transformLibriVoxBook)).catch(error => {
         console.warn('LibriVox search failed:', error);
+        return [];
+      }),
+      
+      // Open Library search
+      this.searchOpenLibraryBooks(query, 10).then(books => books.map(transformOpenLibraryBook)).catch(error => {
+        console.warn('Open Library search failed:', error);
         return [];
       }),
       
@@ -782,6 +867,101 @@ export class ExternalAPIStorage implements IStorage {
     }
   }
   
+  private async getOpenLibraryBook(id: string): Promise<OpenLibraryBook | null> {
+    try {
+      const olid = id.replace('openlibrary-', '');
+      console.log(`Fetching Open Library work: ${olid}`);
+      
+      const url = `${OPEN_LIBRARY_API_BASE}/works/${olid}.json`;
+      
+      const response = await fetchWithTimeout(url, 10000);
+      
+      if (response.ok) {
+        const responseData = await response.json();
+        console.log(`Open Library work response for ${olid}:`, JSON.stringify(responseData, null, 2));
+        
+        // Transform the work data to our search format
+        const openLibraryBook: OpenLibraryBook = {
+          key: responseData.key || `/works/${olid}`,
+          title: responseData.title,
+          author_name: responseData.authors?.map((author: any) => author.name || 'Unknown Author'),
+          first_publish_year: responseData.first_publish_date ? new Date(responseData.first_publish_date).getFullYear() : undefined,
+          subject: responseData.subjects?.slice(0, 3) || undefined,
+          cover_i: responseData.covers?.[0],
+          language: responseData.languages?.map((lang: any) => lang.key?.replace('/languages/', '')) || ['eng'],
+        };
+        
+        return openLibraryBook;
+      } else {
+        console.warn(`Open Library API returned status ${response.status} for ${olid}`);
+        return null;
+      }
+    } catch (error) {
+      console.error('Error fetching Open Library work:', error);
+      return null;
+    }
+  }
+  
+  // Open Library API methods
+  private async fetchOpenLibraryBooks(limit: number = 20): Promise<OpenLibraryBook[]> {
+    try {
+      console.log(`Fetching Open Library books (limit: ${limit})...`);
+      
+      // Get popular/recent books using a general query
+      const url = `${OPEN_LIBRARY_API_BASE}/search.json?q=*&limit=${limit}&sort=new`;
+      
+      const response = await fetchWithTimeout(url, 10000);
+      
+      if (response.ok) {
+        const responseData: OpenLibrarySearchResponse = await response.json();
+        console.log(`Open Library API response: ${responseData.docs.length} books`);
+        return responseData.docs || [];
+      } else {
+        console.warn(`Open Library API returned status ${response.status}`);
+        return [];
+      }
+    } catch (error) {
+      console.error('Error fetching Open Library books:', error);
+      return [];
+    }
+  }
+  
+  private async searchOpenLibraryBooks(query: string, limit: number = 10): Promise<OpenLibraryBook[]> {
+    try {
+      console.log(`Searching Open Library for: ${query}`);
+      
+      // Try title search first
+      const titleUrl = `${OPEN_LIBRARY_API_BASE}/search.json?title=${encodeURIComponent(query)}&limit=${limit}`;
+      
+      const response = await fetchWithTimeout(titleUrl, 10000);
+      
+      if (response.ok) {
+        const responseData: OpenLibrarySearchResponse = await response.json();
+        console.log(`Open Library title search: ${responseData.docs.length} results`);
+        
+        if (responseData.docs.length > 0) {
+          return responseData.docs;
+        }
+      }
+      
+      // If title search doesn't yield results, try general search
+      const generalUrl = `${OPEN_LIBRARY_API_BASE}/search.json?q=${encodeURIComponent(query)}&limit=${limit}`;
+      
+      const generalResponse = await fetchWithTimeout(generalUrl, 10000);
+      
+      if (generalResponse.ok) {
+        const generalData: OpenLibrarySearchResponse = await generalResponse.json();
+        console.log(`Open Library general search: ${generalData.docs.length} results`);
+        return generalData.docs || [];
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Error searching Open Library books:', error);
+      return [];
+    }
+  }
+
   // LibriVox API integration methods
   private async fetchLibriVoxBooks(limit = 50, offset = 0): Promise<LibriVoxBook[]> {
     try {
