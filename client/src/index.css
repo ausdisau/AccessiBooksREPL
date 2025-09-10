@@ -139,4 +139,14 @@
   .high-contrast img {
     filter: contrast(120%);
   }
+
+  /* Enhanced tab styling */
+  .border-b-3 {
+    border-bottom-width: 3px;
+  }
+
+  /* Professional styling enhancements */
+  .bg-card\/50 {
+    background-color: hsl(var(--card) / 0.5);
+  }
 }

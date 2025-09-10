@@ -47,9 +47,9 @@ function App() {
           </a>
 
           {/* Header */}
-          <header className="bg-card border-b border-border">
+          <header className="bg-card border-b-2 border-primary/10 shadow-sm">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <div className="flex justify-between items-center h-16">
+              <div className="flex justify-between items-center h-20">
                 {/* Logo */}
                 <AccessiBooksLogo />
 
@@ -60,15 +60,15 @@ function App() {
           </header>
 
           {/* Navigation */}
-          <nav className="bg-card border-b border-border" role="tablist" aria-label="Main navigation">
+          <nav className="bg-card/50 backdrop-blur-sm border-b border-border" role="tablist" aria-label="Main navigation">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="flex space-x-8">
                 <Button
                   variant="ghost"
-                  className={`py-4 px-1 border-b-2 font-medium ${
+                  className={`py-4 px-6 border-b-3 font-medium transition-all duration-200 ${
                     currentView === "library"
-                      ? "border-primary text-primary"
-                      : "border-transparent text-muted-foreground hover:text-foreground"
+                      ? "border-accent text-primary bg-accent/5 hover:bg-accent/10"
+                      : "border-transparent text-muted-foreground hover:text-primary hover:bg-primary/5"
                   }`}
                   onClick={handleBackToLibrary}
                   role="tab"
@@ -82,11 +82,11 @@ function App() {
                 
                 <Button
                   variant="ghost"
-                  className={`py-4 px-1 border-b-2 font-medium ${
+                  className={`py-4 px-6 border-b-3 font-medium transition-all duration-200 ${
                     currentView === "player"
-                      ? "border-primary text-primary"
-                      : "border-transparent text-muted-foreground hover:text-foreground"
-                  }`}
+                      ? "border-accent text-primary bg-accent/5 hover:bg-accent/10"
+                      : "border-transparent text-muted-foreground hover:text-primary hover:bg-primary/5"
+                  } ${!selectedBook ? "opacity-50 cursor-not-allowed" : ""}`}
                   onClick={() => selectedBook && setCurrentView("player")}
                   disabled={!selectedBook}
                   role="tab"
