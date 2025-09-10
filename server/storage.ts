@@ -1,6 +1,8 @@
 import { type Book, type InsertBook } from "@shared/schema";
 import { randomUUID } from "crypto";
 
+const EXTERNAL_API_BASE = "https://library-management-api-i6if.onrender.com/api";
+
 export interface IStorage {
   getBooks(): Promise<Book[]>;
   getBook(id: string): Promise<Book | undefined>;
@@ -8,15 +10,58 @@ export interface IStorage {
   searchBooks(query: string): Promise<Book[]>;
 }
 
-export class MemStorage implements IStorage {
-  private books: Map<string, Book>;
+interface ExternalBook {
+  _id: string;
+  title: string;
+  author: string;
+  isbn?: string;
+  publishedYear?: number;
+  genre?: string;
+  description?: string;
+  coverImage?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+// Function to transform external API data to our format
+function transformExternalBook(externalBook: ExternalBook): Book {
+  return {
+    id: externalBook._id,
+    title: externalBook.title,
+    author: externalBook.author,
+    narrator: null, // External API doesn't have narrator
+    description: externalBook.description || null,
+    duration: 3600, // Default 1 hour since external API doesn't have duration
+    coverImage: externalBook.coverImage || null,
+    audioUrl: `${EXTERNAL_API_BASE}/stream/${externalBook._id}`, // Mock audio URL
+    genre: externalBook.genre || null,
+    publishedYear: externalBook.publishedYear || null,
+  };
+}
+
+async function fetchWithTimeout(url: string, timeout = 5000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+}
+
+export class ExternalAPIStorage implements IStorage {
+  private fallbackBooks: Map<string, Book>;
 
   constructor() {
-    this.books = new Map();
-    this.initializeSampleData();
+    this.fallbackBooks = new Map();
+    this.initializeFallbackData();
   }
 
-  private initializeSampleData() {
+  private initializeFallbackData() {
     const sampleBooks: Omit<Book, 'id'>[] = [
       {
         title: "The Great Gatsby",
@@ -88,19 +133,50 @@ export class MemStorage implements IStorage {
 
     sampleBooks.forEach(book => {
       const id = randomUUID();
-      this.books.set(id, { ...book, id });
+      this.fallbackBooks.set(id, { ...book, id });
     });
   }
 
   async getBooks(): Promise<Book[]> {
-    return Array.from(this.books.values());
+    try {
+      console.log('Fetching books from external API...');
+      const response = await fetchWithTimeout(`${EXTERNAL_API_BASE}/books`);
+      
+      if (response.ok) {
+        const externalBooks: ExternalBook[] = await response.json();
+        console.log(`Fetched ${externalBooks.length} books from external API`);
+        return externalBooks.map(transformExternalBook);
+      } else {
+        console.warn('External API returned error, using fallback data');
+        return Array.from(this.fallbackBooks.values());
+      }
+    } catch (error) {
+      console.warn('Failed to fetch from external API, using fallback data:', error);
+      return Array.from(this.fallbackBooks.values());
+    }
   }
 
   async getBook(id: string): Promise<Book | undefined> {
-    return this.books.get(id);
+    try {
+      console.log(`Fetching book ${id} from external API...`);
+      const response = await fetchWithTimeout(`${EXTERNAL_API_BASE}/books/${id}`);
+      
+      if (response.ok) {
+        const externalBook: ExternalBook = await response.json();
+        console.log(`Fetched book ${id} from external API`);
+        return transformExternalBook(externalBook);
+      } else {
+        console.warn(`External API returned error for book ${id}, using fallback data`);
+        return this.fallbackBooks.get(id);
+      }
+    } catch (error) {
+      console.warn(`Failed to fetch book ${id} from external API, using fallback data:`, error);
+      return this.fallbackBooks.get(id);
+    }
   }
 
   async createBook(insertBook: InsertBook): Promise<Book> {
+    // For now, we'll add to fallback storage since external API might require authentication
     const id = randomUUID();
     const book: Book = { 
       ...insertBook, 
@@ -111,20 +187,33 @@ export class MemStorage implements IStorage {
       genre: insertBook.genre ?? null,
       publishedYear: insertBook.publishedYear ?? null,
     };
-    this.books.set(id, book);
+    this.fallbackBooks.set(id, book);
     return book;
   }
 
   async searchBooks(query: string): Promise<Book[]> {
-    const books = Array.from(this.books.values());
-    const lowercaseQuery = query.toLowerCase();
-    
-    return books.filter(book => 
-      book.title.toLowerCase().includes(lowercaseQuery) ||
-      book.author.toLowerCase().includes(lowercaseQuery) ||
-      (book.genre && book.genre.toLowerCase().includes(lowercaseQuery))
-    );
+    try {
+      // First try to get all books from external API, then filter
+      const books = await this.getBooks();
+      const lowercaseQuery = query.toLowerCase();
+      
+      return books.filter(book => 
+        book.title.toLowerCase().includes(lowercaseQuery) ||
+        book.author.toLowerCase().includes(lowercaseQuery) ||
+        (book.genre && book.genre.toLowerCase().includes(lowercaseQuery))
+      );
+    } catch (error) {
+      console.warn('Failed to search external API, using fallback data:', error);
+      const books = Array.from(this.fallbackBooks.values());
+      const lowercaseQuery = query.toLowerCase();
+      
+      return books.filter(book => 
+        book.title.toLowerCase().includes(lowercaseQuery) ||
+        book.author.toLowerCase().includes(lowercaseQuery) ||
+        (book.genre && book.genre.toLowerCase().includes(lowercaseQuery))
+      );
+    }
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new ExternalAPIStorage();
