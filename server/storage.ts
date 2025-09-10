@@ -17,7 +17,7 @@ export class MemStorage implements IStorage {
   }
 
   private initializeSampleData() {
-    const sampleBooks: InsertBook[] = [
+    const sampleBooks: Omit<Book, 'id'>[] = [
       {
         title: "The Great Gatsby",
         author: "F. Scott Fitzgerald",
@@ -102,7 +102,15 @@ export class MemStorage implements IStorage {
 
   async createBook(insertBook: InsertBook): Promise<Book> {
     const id = randomUUID();
-    const book: Book = { ...insertBook, id };
+    const book: Book = { 
+      ...insertBook, 
+      id,
+      narrator: insertBook.narrator ?? null,
+      description: insertBook.description ?? null,
+      coverImage: insertBook.coverImage ?? null,
+      genre: insertBook.genre ?? null,
+      publishedYear: insertBook.publishedYear ?? null,
+    };
     this.books.set(id, book);
     return book;
   }
