@@ -31,7 +31,7 @@ function transformExternalBook(externalBook: ExternalBook): Book {
     author: externalBook.author,
     narrator: null, // External API doesn't have narrator
     description: externalBook.description || null,
-    duration: 3600, // Default 1 hour since external API doesn't have duration
+    duration: Math.floor(Math.random() * 30000) + 18000, // Random duration between 5-13 hours
     coverImage: externalBook.coverImage || null,
     audioUrl: `${EXTERNAL_API_BASE}/stream/${externalBook._id}`, // Mock audio URL
     genre: externalBook.genre || null,
@@ -143,7 +143,22 @@ export class ExternalAPIStorage implements IStorage {
       const response = await fetchWithTimeout(`${EXTERNAL_API_BASE}/books`);
       
       if (response.ok) {
-        const externalBooks: ExternalBook[] = await response.json();
+        const responseData = await response.json();
+        console.log('External API response:', JSON.stringify(responseData, null, 2));
+        
+        // Handle different response formats
+        let externalBooks: ExternalBook[];
+        if (Array.isArray(responseData)) {
+          externalBooks = responseData;
+        } else if (responseData.books && Array.isArray(responseData.books)) {
+          externalBooks = responseData.books;
+        } else if (responseData.data && Array.isArray(responseData.data)) {
+          externalBooks = responseData.data;
+        } else {
+          console.warn('Unexpected response format from external API:', responseData);
+          return Array.from(this.fallbackBooks.values());
+        }
+        
         console.log(`Fetched ${externalBooks.length} books from external API`);
         return externalBooks.map(transformExternalBook);
       } else {
@@ -162,7 +177,22 @@ export class ExternalAPIStorage implements IStorage {
       const response = await fetchWithTimeout(`${EXTERNAL_API_BASE}/books/${id}`);
       
       if (response.ok) {
-        const externalBook: ExternalBook = await response.json();
+        const responseData = await response.json();
+        console.log(`External API book response for ${id}:`, JSON.stringify(responseData, null, 2));
+        
+        // Handle different response formats  
+        let externalBook: ExternalBook;
+        if (responseData._id || responseData.id) {
+          externalBook = responseData;
+        } else if (responseData.book) {
+          externalBook = responseData.book;
+        } else if (responseData.data) {
+          externalBook = responseData.data;
+        } else {
+          console.warn('Unexpected book response format from external API:', responseData);
+          return this.fallbackBooks.get(id);
+        }
+        
         console.log(`Fetched book ${id} from external API`);
         return transformExternalBook(externalBook);
       } else {
