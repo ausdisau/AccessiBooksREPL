@@ -9,6 +9,8 @@ const EXTERNAL_API_BASE = "https://library-management-api-i6if.onrender.com/api"
 const LIBRIVOX_API_BASE = "https://librivox.org/api/feed/audiobooks";
 const OPEN_LIBRARY_API_BASE = "https://openlibrary.org";
 const OPEN_LIBRARY_COVERS_BASE = "https://covers.openlibrary.org";
+const GOOGLE_BOOKS_API_BASE = "https://www.googleapis.com/books/v1";
+const GOOGLE_BOOKS_API_KEY = process.env.GOOGLE_BOOKS_API_KEY || "";
 
 export interface IStorage {
   getBooks(): Promise<Book[]>;
@@ -65,6 +67,46 @@ interface OpenLibrarySearchResponse {
   start: number;
   numFoundExact: boolean;
   docs: OpenLibraryBook[];
+}
+
+// Google Books API interfaces
+interface GoogleBooksVolumeInfo {
+  title: string;
+  authors?: string[];
+  publisher?: string;
+  publishedDate?: string;
+  description?: string;
+  industryIdentifiers?: Array<{
+    type: string;
+    identifier: string;
+  }>;
+  pageCount?: number;
+  categories?: string[];
+  averageRating?: number;
+  ratingsCount?: number;
+  imageLinks?: {
+    thumbnail?: string;
+    smallThumbnail?: string;
+  };
+  language?: string;
+  previewLink?: string;
+  infoLink?: string;
+}
+
+interface GoogleBooksVolume {
+  kind: string;
+  id: string;
+  volumeInfo: GoogleBooksVolumeInfo;
+  saleInfo?: {
+    saleability?: string;
+    isEbook?: boolean;
+  };
+}
+
+interface GoogleBooksSearchResponse {
+  kind: string;
+  totalItems: number;
+  items?: GoogleBooksVolume[];
 }
 
 // LibriVox API interfaces
@@ -172,6 +214,44 @@ function transformOpenLibraryBook(openLibraryBook: OpenLibraryBook): Book {
   };
 }
 
+// Function to transform Google Books API data to our format
+function transformGoogleBooksVolume(volume: GoogleBooksVolume): Book {
+  const volumeInfo = volume.volumeInfo;
+  const author = volumeInfo.authors ? volumeInfo.authors[0] : "Unknown Author";
+  
+  // Get high-quality cover image (prefer regular thumbnail over small)
+  const coverImage = volumeInfo.imageLinks?.thumbnail 
+    ? volumeInfo.imageLinks.thumbnail.replace('http://', 'https://')
+    : volumeInfo.imageLinks?.smallThumbnail?.replace('http://', 'https://') || null;
+  
+  // Extract ISBN if available
+  const isbn = volumeInfo.industryIdentifiers?.find(id => 
+    id.type === 'ISBN_13' || id.type === 'ISBN_10'
+  )?.identifier;
+  
+  // Parse year from publishedDate (could be YYYY, YYYY-MM, or YYYY-MM-DD)
+  const publishedYear = volumeInfo.publishedDate 
+    ? parseInt(volumeInfo.publishedDate.split('-')[0]) 
+    : null;
+  
+  return {
+    id: `googlebooks-${volume.id}`,
+    title: volumeInfo.title,
+    author: author,
+    narrator: null, // Google Books doesn't have narrator info for ebooks
+    description: volumeInfo.description || null,
+    duration: 0, // Google Books is for ebooks, not audiobooks
+    coverImage: coverImage,
+    audioUrl: "", // Google Books doesn't provide audio files
+    genre: volumeInfo.categories ? volumeInfo.categories[0] : null,
+    publishedYear: publishedYear,
+    source: "google-books",
+    sourceId: volume.id,
+    totalTime: "0:00:00",
+    language: volumeInfo.language || "en",
+  };
+}
+
 // Function to transform LibriVox API data to our format
 function transformLibriVoxBook(libriVoxBook: LibriVoxBook): Book {
   const authorNames = libriVoxBook.authors.map(author => 
@@ -241,7 +321,9 @@ export class ExternalAPIStorage implements IStorage {
     'ia601408.us.archive.org', // Internet Archive CDN
     'www.archive.org',
     'library-management-api-i6if.onrender.com', // External API
-    'covers.openlibrary.org' // Open Library covers
+    'covers.openlibrary.org', // Open Library covers
+    'books.google.com', // Google Books covers
+    'books.googleusercontent.com' // Google Books CDN
   ];
 
   constructor() {
@@ -387,6 +469,16 @@ export class ExternalAPIStorage implements IStorage {
         return [];
       }),
       
+      // Google Books
+      this.fetchGoogleBooks(20).then((volumes: GoogleBooksVolume[]) => {
+        const transformed = volumes.map(transformGoogleBooksVolume);
+        console.log(`Fetched ${transformed.length} books from Google Books`);
+        return transformed;
+      }).catch((error: any) => {
+        console.warn('Google Books fetch failed:', error instanceof Error ? error.message : 'Unknown error');
+        return [];
+      }),
+      
       // External API books
       this.fetchExternalAPIBooks().catch(error => {
         console.warn('External API fetch failed:', error instanceof Error ? error.message : 'Unknown error');
@@ -467,6 +559,20 @@ export class ExternalAPIStorage implements IStorage {
       }
     }
     
+    // Check if this is a Google Books volume
+    if (id.startsWith('googlebooks-')) {
+      try {
+        console.log(`Fetching Google Books volume: ${id}`);
+        const volumeId = id.replace('googlebooks-', '');
+        const googleBook = await this.getGoogleBook(volumeId);
+        if (googleBook) {
+          return transformGoogleBooksVolume(googleBook);
+        }
+      } catch (error) {
+        console.warn(`Failed to fetch Google Books volume ${id}:`, error);
+      }
+    }
+    
     // Try external API
     try {
       console.log(`Fetching book ${id} from external API...`);
@@ -536,6 +642,12 @@ export class ExternalAPIStorage implements IStorage {
       // Open Library search
       this.searchOpenLibraryBooks(query, 10).then(books => books.map(transformOpenLibraryBook)).catch(error => {
         console.warn('Open Library search failed:', error);
+        return [];
+      }),
+      
+      // Google Books search
+      this.searchGoogleBooks(query, 10).then(volumes => volumes.map(transformGoogleBooksVolume)).catch(error => {
+        console.warn('Google Books search failed:', error);
         return [];
       }),
       
@@ -923,6 +1035,89 @@ export class ExternalAPIStorage implements IStorage {
     } catch (error) {
       console.error('Error fetching Open Library books:', error);
       return [];
+    }
+  }
+  
+  // Google Books API methods
+  private async fetchGoogleBooks(limit: number = 20): Promise<GoogleBooksVolume[]> {
+    if (!GOOGLE_BOOKS_API_KEY) {
+      console.warn('Google Books API key not configured');
+      return [];
+    }
+    
+    try {
+      console.log(`Fetching Google Books (limit: ${limit})...`);
+      
+      // Get popular/interesting books using a broad query
+      const url = `${GOOGLE_BOOKS_API_BASE}/volumes?q=subject:fiction&orderBy=relevance&maxResults=${Math.min(limit, 40)}&key=${GOOGLE_BOOKS_API_KEY}`;
+      
+      const response = await fetchWithTimeout(url, 10000);
+      
+      if (response.ok) {
+        const responseData: GoogleBooksSearchResponse = await response.json();
+        console.log(`Google Books API response: ${responseData.items?.length || 0} books`);
+        return responseData.items || [];
+      } else {
+        console.warn(`Google Books API returned status ${response.status}`);
+        return [];
+      }
+    } catch (error) {
+      console.error('Error fetching Google Books:', error);
+      return [];
+    }
+  }
+  
+  private async searchGoogleBooks(query: string, limit: number = 10): Promise<GoogleBooksVolume[]> {
+    if (!GOOGLE_BOOKS_API_KEY) {
+      console.warn('Google Books API key not configured');
+      return [];
+    }
+    
+    try {
+      console.log(`Searching Google Books for: ${query}`);
+      
+      const url = `${GOOGLE_BOOKS_API_BASE}/volumes?q=${encodeURIComponent(query)}&maxResults=${Math.min(limit, 40)}&key=${GOOGLE_BOOKS_API_KEY}`;
+      
+      const response = await fetchWithTimeout(url, 10000);
+      
+      if (response.ok) {
+        const responseData: GoogleBooksSearchResponse = await response.json();
+        console.log(`Google Books search: ${responseData.items?.length || 0} results`);
+        return responseData.items || [];
+      } else {
+        console.warn(`Google Books search returned status ${response.status}`);
+        return [];
+      }
+    } catch (error) {
+      console.error('Error searching Google Books:', error);
+      return [];
+    }
+  }
+  
+  private async getGoogleBook(volumeId: string): Promise<GoogleBooksVolume | null> {
+    if (!GOOGLE_BOOKS_API_KEY) {
+      console.warn('Google Books API key not configured');
+      return null;
+    }
+    
+    try {
+      console.log(`Fetching Google Books volume: ${volumeId}`);
+      
+      const url = `${GOOGLE_BOOKS_API_BASE}/volumes/${volumeId}?key=${GOOGLE_BOOKS_API_KEY}`;
+      
+      const response = await fetchWithTimeout(url, 10000);
+      
+      if (response.ok) {
+        const volume: GoogleBooksVolume = await response.json();
+        console.log(`Google Books volume found: ${volume.volumeInfo.title}`);
+        return volume;
+      } else {
+        console.warn(`Google Books API returned status ${response.status} for volume ${volumeId}`);
+        return null;
+      }
+    } catch (error) {
+      console.error(`Error fetching Google Books volume ${volumeId}:`, error);
+      return null;
     }
   }
   
