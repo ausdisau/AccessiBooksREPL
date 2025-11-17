@@ -12,6 +12,7 @@ const OPEN_LIBRARY_COVERS_BASE = "https://covers.openlibrary.org";
 const GOOGLE_BOOKS_API_BASE = "https://www.googleapis.com/books/v1";
 const GOOGLE_BOOKS_API_KEY = process.env.GOOGLE_BOOKS_API_KEY || "";
 const INTERNET_ARCHIVE_API_BASE = "https://archive.org";
+const ITUNES_SEARCH_API_BASE = "https://itunes.apple.com";
 
 export interface IStorage {
   getBooks(): Promise<Book[]>;
@@ -108,6 +109,48 @@ interface GoogleBooksSearchResponse {
   kind: string;
   totalItems: number;
   items?: GoogleBooksVolume[];
+}
+
+// iTunes Search API interfaces
+interface iTunesAudiobook {
+  wrapperType: string;
+  kind?: string;
+  artistId?: number;
+  collectionId: number;
+  trackId?: number;
+  artistName: string;
+  collectionName: string;
+  trackName?: string;
+  collectionCensoredName?: string;
+  trackCensoredName?: string;
+  artistViewUrl?: string;
+  collectionViewUrl: string;
+  trackViewUrl?: string;
+  previewUrl?: string;
+  artworkUrl30?: string;
+  artworkUrl60?: string;
+  artworkUrl100?: string;
+  collectionPrice?: number;
+  trackPrice?: number;
+  releaseDate?: string;
+  collectionExplicitness?: string;
+  trackExplicitness?: string;
+  discCount?: number;
+  discNumber?: number;
+  trackCount?: number;
+  trackNumber?: number;
+  trackTimeMillis?: number;
+  country?: string;
+  currency?: string;
+  primaryGenreName?: string;
+  description?: string;
+  shortDescription?: string;
+  longDescription?: string;
+}
+
+interface iTunesSearchResponse {
+  resultCount: number;
+  results: iTunesAudiobook[];
 }
 
 // Internet Archive API interfaces
@@ -279,6 +322,48 @@ function transformGoogleBooksVolume(volume: GoogleBooksVolume): Book {
   };
 }
 
+// Function to transform iTunes Search API data to our format
+function transformiTunesAudiobook(itunes: iTunesAudiobook): Book {
+  const author = itunes.artistName || "Unknown Author";
+  
+  // iTunes provides high-quality artwork
+  const coverImage = itunes.artworkUrl100?.replace('100x100', '600x600') || itunes.artworkUrl100 || null;
+  
+  // Parse year from releaseDate (ISO format: YYYY-MM-DD)
+  const publishedYear = itunes.releaseDate 
+    ? parseInt(itunes.releaseDate.split('-')[0]) 
+    : null;
+  
+  // Convert trackTimeMillis to duration in seconds (if available)
+  const duration = itunes.trackTimeMillis ? Math.floor(itunes.trackTimeMillis / 1000) : 0;
+  
+  // Format duration as HH:MM:SS
+  const hours = Math.floor(duration / 3600);
+  const minutes = Math.floor((duration % 3600) / 60);
+  const seconds = duration % 60;
+  const totalTime = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  
+  // Use description fields (prefer longDescription > description > shortDescription)
+  const description = itunes.longDescription || itunes.description || itunes.shortDescription || null;
+  
+  return {
+    id: `itunes-${itunes.collectionId}`,
+    title: itunes.collectionName,
+    author: author,
+    narrator: null, // iTunes API doesn't provide narrator information
+    description: description,
+    duration: duration,
+    coverImage: coverImage,
+    audioUrl: itunes.previewUrl || "", // iTunes provides preview URLs
+    genre: itunes.primaryGenreName || null,
+    publishedYear: publishedYear,
+    source: "itunes",
+    sourceId: itunes.collectionId.toString(),
+    totalTime: totalTime,
+    language: "en", // iTunes API doesn't always provide language info
+  };
+}
+
 // Function to transform Internet Archive API data to our format
 function transformInternetArchiveDoc(doc: InternetArchiveDoc): Book {
   const author = Array.isArray(doc.creator) 
@@ -389,7 +474,9 @@ export class ExternalAPIStorage implements IStorage {
     'library-management-api-i6if.onrender.com', // External API
     'covers.openlibrary.org', // Open Library covers
     'books.google.com', // Google Books covers
-    'books.googleusercontent.com' // Google Books CDN
+    'books.googleusercontent.com', // Google Books CDN
+    'audio-ssl.itunes.apple.com', // iTunes preview audio
+    'mzstatic.com' // iTunes/Apple CDN (includes is*-ssl.mzstatic.com subdomains)
   ];
 
   constructor() {
@@ -545,6 +632,16 @@ export class ExternalAPIStorage implements IStorage {
         return [];
       }),
       
+      // iTunes audiobooks
+      this.fetchiTunesAudiobooks(20).then((audiobooks: iTunesAudiobook[]) => {
+        const transformed = audiobooks.map(transformiTunesAudiobook);
+        console.log(`Fetched ${transformed.length} audiobooks from iTunes`);
+        return transformed;
+      }).catch((error: any) => {
+        console.warn('iTunes fetch failed:', error instanceof Error ? error.message : 'Unknown error');
+        return [];
+      }),
+      
       // External API books
       this.fetchExternalAPIBooks().catch(error => {
         console.warn('External API fetch failed:', error instanceof Error ? error.message : 'Unknown error');
@@ -639,6 +736,20 @@ export class ExternalAPIStorage implements IStorage {
       }
     }
     
+    // Check if this is an iTunes audiobook
+    if (id.startsWith('itunes-')) {
+      try {
+        console.log(`Fetching iTunes audiobook: ${id}`);
+        const collectionId = parseInt(id.replace('itunes-', ''));
+        const itunesBook = await this.getiTunesAudiobook(collectionId);
+        if (itunesBook) {
+          return transformiTunesAudiobook(itunesBook);
+        }
+      } catch (error) {
+        console.warn(`Failed to fetch iTunes audiobook ${id}:`, error);
+      }
+    }
+    
     // Try external API
     try {
       console.log(`Fetching book ${id} from external API...`);
@@ -714,6 +825,12 @@ export class ExternalAPIStorage implements IStorage {
       // Google Books search
       this.searchGoogleBooks(query, 10).then(volumes => volumes.map(transformGoogleBooksVolume)).catch(error => {
         console.warn('Google Books search failed:', error);
+        return [];
+      }),
+      
+      // iTunes search
+      this.searchiTunesAudiobooks(query, 10).then(audiobooks => audiobooks.map(transformiTunesAudiobook)).catch(error => {
+        console.warn('iTunes search failed:', error);
         return [];
       }),
       
@@ -1196,6 +1313,99 @@ export class ExternalAPIStorage implements IStorage {
     } catch (error) {
       console.error(`Error fetching Google Books volume ${volumeId}:`, error);
       return null;
+    }
+  }
+  
+  // iTunes Search API methods
+  private async fetchiTunesAudiobooks(limit: number = 20): Promise<iTunesAudiobook[]> {
+    try {
+      console.log(`Fetching iTunes audiobooks (limit: ${limit})...`);
+      
+      // Search for popular audiobooks (using a broad term)
+      const url = `${ITUNES_SEARCH_API_BASE}/search?term=bestseller&entity=audiobook&limit=${limit}&country=us`;
+      
+      const response = await fetchWithTimeout(url, 10000);
+      
+      if (response.ok) {
+        const responseData: iTunesSearchResponse = await response.json();
+        console.log(`iTunes API response: ${responseData.results.length} audiobooks`);
+        return responseData.results || [];
+      } else {
+        console.warn(`iTunes API returned status ${response.status}`);
+        return [];
+      }
+    } catch (error) {
+      console.error('Error fetching iTunes audiobooks:', error);
+      return [];
+    }
+  }
+  
+  private async searchiTunesAudiobooks(query: string, limit: number = 10): Promise<iTunesAudiobook[]> {
+    try {
+      console.log(`Searching iTunes for: ${query}`);
+      
+      const url = `${ITUNES_SEARCH_API_BASE}/search?term=${encodeURIComponent(query)}&entity=audiobook&limit=${limit}&country=us`;
+      
+      const response = await fetchWithTimeout(url, 10000);
+      
+      if (response.ok) {
+        const responseData: iTunesSearchResponse = await response.json();
+        console.log(`iTunes search: ${responseData.results.length} results`);
+        return responseData.results || [];
+      } else {
+        console.warn(`iTunes search returned status ${response.status}`);
+        return [];
+      }
+    } catch (error) {
+      console.error('Error searching iTunes:', error);
+      return [];
+    }
+  }
+  
+  private async getiTunesAudiobook(collectionId: number): Promise<iTunesAudiobook | null> {
+    try {
+      console.log(`Fetching iTunes audiobook: ${collectionId}`);
+      
+      const url = `${ITUNES_SEARCH_API_BASE}/lookup?id=${collectionId}&entity=audiobook`;
+      
+      const response = await fetchWithTimeout(url, 10000);
+      
+      if (response.ok) {
+        const responseData: iTunesSearchResponse = await response.json();
+        if (responseData.results && responseData.results.length > 0) {
+          console.log(`iTunes audiobook found: ${responseData.results[0].collectionName}`);
+          return responseData.results[0];
+        }
+      }
+      
+      console.warn(`iTunes audiobook not found: ${collectionId}`);
+      return null;
+    } catch (error) {
+      console.error(`Error fetching iTunes audiobook ${collectionId}:`, error);
+      return null;
+    }
+  }
+  
+  // Search iTunes by ISBN
+  private async searchiTunesByISBN(isbn: string): Promise<iTunesAudiobook[]> {
+    try {
+      console.log(`Searching iTunes by ISBN: ${isbn}`);
+      
+      const url = `${ITUNES_SEARCH_API_BASE}/search?term=${isbn}&entity=audiobook&limit=5&country=us`;
+      
+      const response = await fetchWithTimeout(url, 10000);
+      
+      if (response.ok) {
+        const responseData: iTunesSearchResponse = await response.json();
+        console.log(`iTunes ISBN search: ${responseData.results.length} results`);
+        return responseData.results || [];
+      } else {
+        console.warn(`iTunes ISBN search returned status ${response.status}`);
+        return [];
+      }
+    } catch (error) {
+      console.error(`Error searching iTunes by ISBN ${isbn}:`, error);
+      return [];
     }
   }
   
