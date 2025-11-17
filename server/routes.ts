@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { setupAuth } from "./auth";
+import { setupAuth, isAuthenticated } from "./replitAuth";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Enable CORS for same-origin requests (more secure than wildcard)
@@ -30,8 +30,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Setup authentication routes: /api/register, /api/login, /api/logout, /api/user
-  setupAuth(app);
+  // Setup authentication routes: /api/login, /api/callback, /api/logout
+  await setupAuth(app);
+
+  // Auth user endpoint
+  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
+    try {
+      if (!req.user || !req.user.claims || !req.user.claims.sub) {
+        console.error("User claims missing from request");
+        return res.status(401).json({ message: "Unauthorized - claims missing" });
+      }
+      
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        console.error(`User ${userId} not found in database`);
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      res.json(user);
+    } catch (error) {
+      console.error("Error fetching user:", error);
+      res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
 
   // GET /api/books - Get all books
   app.get("/api/books", async (req, res) => {

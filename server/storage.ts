@@ -1,7 +1,9 @@
-import { type Book, type InsertBook, type User, type InsertUser } from "@shared/schema";
+import { type Book, type InsertBook, type User, type InsertUser, type UpsertUser, users } from "@shared/schema";
 import { randomUUID } from "crypto";
 import session from "express-session";
 import createMemoryStore from "memorystore";
+import { db } from "./db";
+import { eq } from "drizzle-orm";
 
 const MemoryStore = createMemoryStore(session);
 
@@ -20,8 +22,11 @@ export interface IStorage {
   createBook(book: InsertBook): Promise<Book>;
   searchBooks(query: string): Promise<Book[]>;
   
-  // User management
+  // User management (Replit Auth)
   getUser(id: string): Promise<User | undefined>;
+  upsertUser(user: UpsertUser): Promise<User>;
+  
+  // Legacy user management (for external API compatibility)
   getUserByUsername(username: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
@@ -957,35 +962,37 @@ export class ExternalAPIStorage implements IStorage {
   // User management methods integrating with external API
   async getUser(id: string): Promise<User | undefined> {
     try {
-      console.log(`Fetching user ${id} from external API...`);
-      const response = await fetchWithTimeout(`${EXTERNAL_API_BASE}/users/${id}`);
-      
-      if (response.ok) {
-        const responseData = await response.json();
-        console.log(`External API user response for ${id}:`, JSON.stringify(responseData, null, 2));
-        
-        let externalUser: ExternalUser;
-        if (responseData._id || responseData.id) {
-          externalUser = responseData;
-        } else if (responseData.user) {
-          externalUser = responseData.user;
-        } else if (responseData.data) {
-          externalUser = responseData.data;
-        } else {
-          console.warn('Unexpected user response format from external API:', responseData);
-          return this.localUsers.get(id);
-        }
-        
-        const user = transformExternalUser(externalUser);
-        this.localUsers.set(id, user); // Cache locally for session management
-        return user;
-      } else {
-        console.warn(`External API returned error for user ${id}, checking local cache`);
-        return this.localUsers.get(id);
-      }
+      console.log(`Fetching user ${id} from database...`);
+      const [user] = await db.select().from(users).where(eq(users.id, id));
+      return user;
     } catch (error) {
-      console.warn(`Failed to fetch user ${id} from external API, checking local cache:`, error);
-      return this.localUsers.get(id);
+      console.error(`Error fetching user ${id}:`, error);
+      return undefined;
+    }
+  }
+
+  async upsertUser(userData: UpsertUser): Promise<User> {
+    try {
+      console.log(`Upserting user ${userData.id || 'new'} (${userData.email})`);
+      const [user] = await db
+        .insert(users)
+        .values(userData)
+        .onConflictDoUpdate({
+          target: users.id,
+          set: {
+            email: userData.email,
+            firstName: userData.firstName,
+            lastName: userData.lastName,
+            profileImageUrl: userData.profileImageUrl,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+      console.log(`Successfully upserted user ${user.id}`);
+      return user;
+    } catch (error) {
+      console.error('Error upserting user:', error);
+      throw error;
     }
   }
 

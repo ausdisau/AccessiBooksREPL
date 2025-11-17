@@ -5,12 +5,13 @@
 AccessiBooks is a comprehensive audiobook player application designed with accessibility at its core. The application features a robust library management system for browsing audiobooks from multiple sources and a full-featured audio player with advanced playback controls, bookmarking capabilities, and accessibility features including high contrast mode, dyslexia-friendly fonts, and keyboard navigation support.
 
 The platform aggregates content from multiple external APIs to provide users with access to thousands of free and commercial audiobooks and ebooks, including:
+- **iTunes Search API**: 20 audiobooks with preview audio and commercial titles
 - **LibriVox**: 30+ free public domain audiobooks
 - **Open Library**: 20 books with comprehensive metadata
 - **Google Books**: 20 books with enhanced search and discovery
 - **External Library API**: Additional curated content
 
-Total: **74+ books** from 4 integrated sources with parallel API fetching, intelligent caching, and comprehensive search across all sources.
+Total: **90+ books** from 5 integrated sources with parallel API fetching, intelligent caching, and comprehensive search across all sources.
 
 ## User Preferences
 
@@ -37,9 +38,13 @@ Preferred communication style: Simple, everyday language.
 - **In-Memory Storage**: Fallback storage implementation with sample data for development
 
 ### Authentication and Authorization
-- **Current State**: No authentication system implemented
-- **Session Management**: Basic session handling infrastructure present but not actively used
-- **Access Control**: Open access to all audiobook content and features
+- **System**: Replit Auth (OpenID Connect OAuth 2.0)
+- **Providers**: Google, GitHub, Apple, X (Twitter), email/password
+- **Session Management**: PostgreSQL-backed sessions via connect-pg-simple
+- **Token Handling**: Automatic access token refresh using refresh tokens
+- **User Storage**: PostgreSQL database with Drizzle ORM
+- **Security**: sameSite cookies, httpOnly, secure in production, CSRF protection
+- **Client Integration**: useAuth React hook, landing page for logged-out users
 
 ### Accessibility Features
 - **Visual Accessibility**: High contrast mode, dyslexia-friendly font options, dark mode support
