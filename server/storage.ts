@@ -11,6 +11,7 @@ const OPEN_LIBRARY_API_BASE = "https://openlibrary.org";
 const OPEN_LIBRARY_COVERS_BASE = "https://covers.openlibrary.org";
 const GOOGLE_BOOKS_API_BASE = "https://www.googleapis.com/books/v1";
 const GOOGLE_BOOKS_API_KEY = process.env.GOOGLE_BOOKS_API_KEY || "";
+const INTERNET_ARCHIVE_API_BASE = "https://archive.org";
 
 export interface IStorage {
   getBooks(): Promise<Book[]>;
@@ -107,6 +108,32 @@ interface GoogleBooksSearchResponse {
   kind: string;
   totalItems: number;
   items?: GoogleBooksVolume[];
+}
+
+// Internet Archive API interfaces
+interface InternetArchiveDoc {
+  identifier: string;
+  title: string;
+  creator?: string | string[];
+  description?: string;
+  publisher?: string | string[];
+  date?: string;
+  year?: number;
+  subject?: string | string[];
+  language?: string | string[];
+  mediatype?: string;
+  format?: string[];
+  collection?: string[];
+}
+
+interface InternetArchiveSearchResponse {
+  response: {
+    numFound: number;
+    docs: InternetArchiveDoc[];
+  };
+  responseHeader: {
+    status: number;
+  };
 }
 
 // LibriVox API interfaces
@@ -252,6 +279,47 @@ function transformGoogleBooksVolume(volume: GoogleBooksVolume): Book {
   };
 }
 
+// Function to transform Internet Archive API data to our format
+function transformInternetArchiveDoc(doc: InternetArchiveDoc): Book {
+  const author = Array.isArray(doc.creator) 
+    ? doc.creator[0] 
+    : doc.creator || "Unknown Author";
+  
+  // Internet Archive cover images
+  const coverImage = `https://archive.org/services/img/${doc.identifier}`;
+  
+  // Extract subject/genre
+  const subject = Array.isArray(doc.subject) 
+    ? doc.subject[0] 
+    : doc.subject;
+  
+  // Extract language
+  const language = Array.isArray(doc.language)
+    ? doc.language[0]
+    : doc.language || "en";
+  
+  // Internet Archive items are texts/ebooks, not audiobooks in this integration
+  // (We already get audiobooks from LibriVox which uses Internet Archive for hosting)
+  const isAudiobook = false;
+  
+  return {
+    id: `internetarchive-${doc.identifier}`,
+    title: doc.title,
+    author: author,
+    narrator: null, // These are ebook texts, not audiobooks
+    description: doc.description || null,
+    duration: 0, // Ebooks don't have duration
+    coverImage: coverImage,
+    audioUrl: "", // These are ebook texts, not audiobooks
+    genre: subject || null,
+    publishedYear: doc.year || (doc.date ? parseInt(doc.date.split('-')[0]) : null),
+    source: "internet-archive",
+    sourceId: doc.identifier,
+    totalTime: "0:00:00",
+    language: language,
+  };
+}
+
 // Function to transform LibriVox API data to our format
 function transformLibriVoxBook(libriVoxBook: LibriVoxBook): Book {
   const authorNames = libriVoxBook.authors.map(author => 
@@ -316,10 +384,8 @@ export class ExternalAPIStorage implements IStorage {
   // Security: Allowed domains for audio streaming and covers
   private readonly ALLOWED_AUDIO_DOMAINS = [
     'librivox.org',
-    'archive.org',
-    'ia801408.us.archive.org', // Internet Archive CDN
-    'ia601408.us.archive.org', // Internet Archive CDN
-    'www.archive.org',
+    'archive.org', // Internet Archive base domain
+    'www.archive.org', // Internet Archive www
     'library-management-api-i6if.onrender.com', // External API
     'covers.openlibrary.org', // Open Library covers
     'books.google.com', // Google Books covers
@@ -740,9 +806,21 @@ export class ExternalAPIStorage implements IStorage {
   validateAudioUrl(url: string): boolean {
     try {
       const parsedUrl = new URL(url);
-      return this.ALLOWED_AUDIO_DOMAINS.some(domain => 
+      
+      // Check against explicit allowed domains
+      const isAllowed = this.ALLOWED_AUDIO_DOMAINS.some(domain => 
         parsedUrl.hostname === domain || parsedUrl.hostname.endsWith('.' + domain)
       );
+      
+      if (isAllowed) return true;
+      
+      // Allow all Internet Archive CDN subdomains (ia###.us.archive.org pattern)
+      const archiveCDNPattern = /^ia\d+\.us\.archive\.org$/;
+      if (archiveCDNPattern.test(parsedUrl.hostname)) {
+        return true;
+      }
+      
+      return false;
     } catch {
       return false;
     }
@@ -1117,6 +1195,92 @@ export class ExternalAPIStorage implements IStorage {
       }
     } catch (error) {
       console.error(`Error fetching Google Books volume ${volumeId}:`, error);
+      return null;
+    }
+  }
+  
+  // Internet Archive API methods
+  private async fetchInternetArchiveBooks(limit: number = 15): Promise<InternetArchiveDoc[]> {
+    try {
+      console.log(`Fetching Internet Archive books (limit: ${limit})...`);
+      
+      // Search for public domain texts in English
+      const query = 'mediatype:texts AND language:eng AND collection:opensource';
+      const url = `${INTERNET_ARCHIVE_API_BASE}/advancedsearch.php?q=${encodeURIComponent(query)}&fl[]=identifier,title,creator,description,year,date,subject,language,mediatype&rows=${limit}&output=json`;
+      
+      const response = await fetchWithTimeout(url, 10000);
+      
+      if (response.ok) {
+        const responseData: InternetArchiveSearchResponse = await response.json();
+        console.log(`Internet Archive API response: ${responseData.response.docs.length} books`);
+        return responseData.response.docs || [];
+      } else {
+        console.warn(`Internet Archive API returned status ${response.status}`);
+        return [];
+      }
+    } catch (error) {
+      console.error('Error fetching Internet Archive books:', error);
+      return [];
+    }
+  }
+  
+  private async searchInternetArchiveBooks(query: string, limit: number = 10): Promise<InternetArchiveDoc[]> {
+    try {
+      console.log(`Searching Internet Archive for: ${query}`);
+      
+      // Search in title and creator fields, limit to texts
+      const searchQuery = `(title:(${query}) OR creator:(${query})) AND mediatype:texts`;
+      const url = `${INTERNET_ARCHIVE_API_BASE}/advancedsearch.php?q=${encodeURIComponent(searchQuery)}&fl[]=identifier,title,creator,description,year,date,subject,language,mediatype,format&rows=${limit}&output=json`;
+      
+      const response = await fetchWithTimeout(url, 10000);
+      
+      if (response.ok) {
+        const responseData: InternetArchiveSearchResponse = await response.json();
+        console.log(`Internet Archive search: ${responseData.response.docs.length} results`);
+        return responseData.response.docs || [];
+      } else {
+        console.warn(`Internet Archive search returned status ${response.status}`);
+        return [];
+      }
+    } catch (error) {
+      console.error('Error searching Internet Archive:', error);
+      return [];
+    }
+  }
+  
+  private async getInternetArchiveBook(identifier: string): Promise<InternetArchiveDoc | null> {
+    try {
+      console.log(`Fetching Internet Archive item: ${identifier}`);
+      
+      const url = `${INTERNET_ARCHIVE_API_BASE}/metadata/${identifier}`;
+      
+      const response = await fetchWithTimeout(url, 10000);
+      
+      if (response.ok) {
+        const metadata = await response.json();
+        
+        // Transform metadata response to match our doc interface
+        const doc: InternetArchiveDoc = {
+          identifier: metadata.metadata.identifier || identifier,
+          title: metadata.metadata.title || "Untitled",
+          creator: metadata.metadata.creator,
+          description: metadata.metadata.description,
+          date: metadata.metadata.date,
+          year: metadata.metadata.year,
+          subject: metadata.metadata.subject,
+          language: metadata.metadata.language,
+          mediatype: metadata.metadata.mediatype,
+          format: metadata.files?.map((f: any) => f.format),
+        };
+        
+        console.log(`Internet Archive item found: ${doc.title}`);
+        return doc;
+      } else {
+        console.warn(`Internet Archive API returned status ${response.status} for item ${identifier}`);
+        return null;
+      }
+    } catch (error) {
+      console.error(`Error fetching Internet Archive item ${identifier}:`, error);
       return null;
     }
   }
