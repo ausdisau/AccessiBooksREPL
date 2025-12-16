@@ -3,6 +3,8 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
 import { setupAuth, isAuthenticated } from "./replitAuth";
+import { setupMultiAuth } from "./multiAuth";
+import { getUncachableSpotifyClient, isSpotifyConnected } from "./spotifyClient";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Enable CORS for same-origin requests (more secure than wildcard)
@@ -30,8 +32,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Setup authentication routes: /api/login, /api/callback, /api/logout
+  // Setup authentication routes: /api/login, /api/callback, /api/logout (Replit Auth)
   await setupAuth(app);
+  
+  // Setup multi-provider authentication: local, Facebook, Microsoft, Auth0
+  setupMultiAuth(app);
 
   // Auth user endpoint
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
@@ -122,6 +127,111 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Streaming error:', error);
       res.status(500).json({ message: "Failed to stream book" });
+    }
+  });
+
+  // Spotify connection status
+  app.get("/api/spotify/status", async (req, res) => {
+    try {
+      const connected = await isSpotifyConnected();
+      res.json({ connected });
+    } catch (error) {
+      res.json({ connected: false });
+    }
+  });
+
+  // Search Spotify audiobooks
+  app.get("/api/spotify/search", async (req, res) => {
+    try {
+      const { q } = req.query;
+      if (!q || typeof q !== "string") {
+        return res.status(400).json({ message: "Search query is required" });
+      }
+
+      const spotify = await getUncachableSpotifyClient();
+      const results = await spotify.search(q, ["audiobook"], undefined, 20);
+      
+      const audiobooks = results.audiobooks?.items.map(item => ({
+        id: `spotify-${item.id}`,
+        title: item.name,
+        author: item.authors?.[0]?.name || "Unknown Author",
+        narrator: item.narrators?.[0]?.name || null,
+        description: item.description || null,
+        duration: item.total_chapters ? item.total_chapters * 1800 : 3600, // Estimate
+        coverImage: item.images?.[0]?.url || null,
+        audioUrl: item.external_urls?.spotify || "",
+        genre: null,
+        publishedYear: null,
+        source: "spotify",
+        sourceId: item.id,
+        totalTime: null,
+        language: item.languages?.[0] || "en",
+      })) || [];
+
+      res.json(audiobooks);
+    } catch (error) {
+      console.error("Spotify search error:", error);
+      res.status(500).json({ message: "Failed to search Spotify audiobooks" });
+    }
+  });
+
+  // Get Spotify audiobook details
+  app.get("/api/spotify/audiobook/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const spotify = await getUncachableSpotifyClient();
+      const audiobook = await spotify.audiobooks.get(id);
+      
+      res.json({
+        id: `spotify-${audiobook.id}`,
+        title: audiobook.name,
+        author: audiobook.authors?.[0]?.name || "Unknown Author",
+        narrator: audiobook.narrators?.[0]?.name || null,
+        description: audiobook.description || null,
+        duration: audiobook.total_chapters ? audiobook.total_chapters * 1800 : 3600,
+        coverImage: audiobook.images?.[0]?.url || null,
+        audioUrl: audiobook.external_urls?.spotify || "",
+        genre: null,
+        publishedYear: null,
+        source: "spotify",
+        sourceId: audiobook.id,
+        chapters: audiobook.chapters?.items?.map(ch => ({
+          id: ch.id,
+          name: ch.name,
+          duration_ms: ch.duration_ms,
+        })) || [],
+      });
+    } catch (error) {
+      console.error("Spotify audiobook error:", error);
+      res.status(500).json({ message: "Failed to fetch Spotify audiobook" });
+    }
+  });
+
+  // Get user's Spotify library audiobooks
+  app.get("/api/spotify/library", async (req, res) => {
+    try {
+      const spotify = await getUncachableSpotifyClient();
+      const savedAudiobooks = await spotify.currentUser.audiobooks.savedAudiobooks(20);
+      
+      const audiobooks = savedAudiobooks.items.map(item => ({
+        id: `spotify-${item.id}`,
+        title: item.name,
+        author: item.authors?.[0]?.name || "Unknown Author",
+        narrator: item.narrators?.[0]?.name || null,
+        description: item.description || null,
+        duration: item.total_chapters ? item.total_chapters * 1800 : 3600,
+        coverImage: item.images?.[0]?.url || null,
+        audioUrl: item.external_urls?.spotify || "",
+        genre: null,
+        publishedYear: null,
+        source: "spotify",
+        sourceId: item.id,
+      }));
+
+      res.json(audiobooks);
+    } catch (error) {
+      console.error("Spotify library error:", error);
+      res.status(500).json({ message: "Failed to fetch Spotify library" });
     }
   });
 

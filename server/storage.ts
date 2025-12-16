@@ -226,16 +226,17 @@ interface ExternalUser {
   updatedAt?: string;
 }
 
-// Transform external user data to our format
-function transformExternalUser(externalUser: ExternalUser, isLocalUser = false, hashedPassword?: string): User {
+// Transform external user data to our format (for OAuth compatibility)
+function transformExternalUser(externalUser: ExternalUser): User {
   return {
     id: externalUser._id,
-    username: externalUser.username,
     email: externalUser.email,
-    password: hashedPassword || (isLocalUser ? '' : 'EXTERNAL_USER'), // Mark external users specially
     firstName: externalUser.firstName || null,
     lastName: externalUser.lastName || null,
-    profilePicture: externalUser.profilePicture || null,
+    profileImageUrl: externalUser.profilePicture || null,
+    passwordHash: null,
+    authProvider: "external",
+    providerId: externalUser._id,
     createdAt: externalUser.createdAt ? new Date(externalUser.createdAt) : new Date(),
     updatedAt: externalUser.updatedAt ? new Date(externalUser.updatedAt) : new Date(),
   };
@@ -997,44 +998,10 @@ export class ExternalAPIStorage implements IStorage {
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    // Check local cache first for session management
-    const localUser = Array.from(this.localUsers.values()).find(user => user.username === username);
-    if (localUser) {
-      console.log(`Found user ${username} in local cache`);
-      return localUser;
-    }
-
-    try {
-      console.log(`Searching for user ${username} from external API...`);
-      const response = await fetchWithTimeout(`${EXTERNAL_API_BASE}/users`);
-      
-      if (response.ok) {
-        const responseData = await response.json();
-        let externalUsers: ExternalUser[];
-        
-        if (Array.isArray(responseData)) {
-          externalUsers = responseData;
-        } else if (responseData.users && Array.isArray(responseData.users)) {
-          externalUsers = responseData.users;
-        } else if (responseData.data && Array.isArray(responseData.data)) {
-          externalUsers = responseData.data;
-        } else {
-          console.warn('Unexpected users response format from external API:', responseData);
-          return undefined;
-        }
-        
-        const externalUser = externalUsers.find(user => user.username === username);
-        if (externalUser) {
-          const user = transformExternalUser(externalUser);
-          this.localUsers.set(user.id, user);
-          return user;
-        }
-      }
-    } catch (error) {
-      console.warn(`Failed to search for user ${username} from external API:`, error);
-    }
-    
-    return undefined;
+    // This method is deprecated - use getUserByEmail instead
+    // For OAuth-based auth, we don't have usernames
+    console.log(`getUserByUsername is deprecated, using email lookup instead`);
+    return this.getUserByEmail(username);
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
@@ -1077,108 +1044,35 @@ export class ExternalAPIStorage implements IStorage {
 
   async createUser(insertUser: InsertUser): Promise<User> {
     try {
-      console.log('Creating user via external API...', { username: insertUser.username, email: insertUser.email });
+      console.log('Creating user in database...', { email: insertUser.email });
       
-      const payload = {
-        username: insertUser.username,
-        email: insertUser.email,
-        password: insertUser.password,
-        firstName: insertUser.firstName,
-        lastName: insertUser.lastName
-      };
+      // Create user in PostgreSQL database
+      const [user] = await db
+        .insert(users)
+        .values({
+          email: insertUser.email,
+          firstName: insertUser.firstName,
+          lastName: insertUser.lastName,
+          passwordHash: insertUser.passwordHash,
+          authProvider: insertUser.authProvider || "local",
+          providerId: insertUser.providerId,
+          profileImageUrl: insertUser.profileImageUrl,
+        })
+        .returning();
       
-      const response = await fetch(`${EXTERNAL_API_BASE}/users/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      
-      if (response.ok) {
-        const responseData = await response.json();
-        console.log('User created successfully via external API:', responseData);
-        
-        let externalUser: ExternalUser;
-        if (responseData._id || responseData.id) {
-          externalUser = responseData;
-        } else if (responseData.user) {
-          externalUser = responseData.user;
-        } else if (responseData.data) {
-          externalUser = responseData.data;
-        } else {
-          throw new Error('Unexpected registration response format');
-        }
-        
-        const user = transformExternalUser(externalUser, false); // External user, no password stored
-        this.localUsers.set(user.id, user);
-        return user;
-      } else {
-        const errorText = await response.text();
-        throw new Error(`Registration failed: ${errorText}`);
-      }
-    } catch (error) {
-      console.warn('Failed to create user via external API, creating locally:', error);
-      
-      // Fallback to local creation
-      const id = randomUUID();
-      const user: User = {
-        id,
-        username: insertUser.username,
-        email: insertUser.email,
-        password: insertUser.password,
-        firstName: insertUser.firstName || null,
-        lastName: insertUser.lastName || null,
-        profilePicture: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      
-      this.localUsers.set(id, user);
+      console.log('User created successfully:', user.id);
+      this.localUsers.set(user.id, user);
       return user;
+    } catch (error) {
+      console.error('Failed to create user:', error);
+      throw error;
     }
   }
   
-  async authenticateExternalUser(username: string, password: string): Promise<User | null> {
-    try {
-      console.log(`Attempting external authentication for: ${username}`);
-      
-      const payload = {
-        username,
-        password,
-      };
-      
-      const response = await fetch(`${EXTERNAL_API_BASE}/users/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      
-      if (response.ok) {
-        const responseData = await response.json();
-        console.log('External authentication successful:', { username });
-        
-        let externalUser: ExternalUser;
-        if (responseData._id || responseData.id) {
-          externalUser = responseData;
-        } else if (responseData.user) {
-          externalUser = responseData.user;
-        } else if (responseData.data) {
-          externalUser = responseData.data;
-        } else {
-          console.warn('Unexpected external login response format:', responseData);
-          return null;
-        }
-        
-        const user = transformExternalUser(externalUser, false); // External user
-        this.localUsers.set(user.id, user);
-        return user;
-      } else {
-        console.log(`External authentication failed for ${username}`);
-        return null;
-      }
-    } catch (error) {
-      console.warn(`External authentication error for ${username}:`, error);
-      return null;
-    }
+  async authenticateExternalUser(email: string, password: string): Promise<User | null> {
+    // This method is deprecated - use local auth via multiAuth.ts instead
+    console.log('authenticateExternalUser is deprecated - use local auth instead');
+    return null;
   }
   
   private async getOpenLibraryBook(id: string): Promise<OpenLibraryBook | null> {
