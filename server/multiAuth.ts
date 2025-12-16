@@ -10,20 +10,6 @@ import { users } from "@shared/schema";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
 
-// Serialize and deserialize user for sessions
-passport.serializeUser((user: any, done) => {
-  done(null, user.id);
-});
-
-passport.deserializeUser(async (id: string, done) => {
-  try {
-    const user = await storage.getUser(id);
-    done(null, user);
-  } catch (error) {
-    done(error, null);
-  }
-});
-
 // Local strategy (username/password)
 passport.use(
   new LocalStrategy(
@@ -150,9 +136,8 @@ if (process.env.AUTH0_DOMAIN && process.env.AUTH0_CLIENT_ID && process.env.AUTH0
 }
 
 export function setupMultiAuth(app: Express) {
-  app.use(passport.initialize());
-  app.use(passport.session());
-
+  // Note: passport.initialize() and passport.session() are already set up in replitAuth.ts
+  
   // Local registration
   app.post("/api/auth/register", async (req: Request, res: Response) => {
     try {

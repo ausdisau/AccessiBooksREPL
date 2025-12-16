@@ -38,23 +38,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Setup multi-provider authentication: local, Facebook, Microsoft, Auth0
   setupMultiAuth(app);
 
-  // Auth user endpoint
-  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
+  // Auth user endpoint - supports both Replit Auth and local auth
+  app.get('/api/auth/user', async (req: any, res) => {
     try {
-      if (!req.user || !req.user.claims || !req.user.claims.sub) {
-        console.error("User claims missing from request");
-        return res.status(401).json({ message: "Unauthorized - claims missing" });
+      if (!req.isAuthenticated() || !req.user) {
+        return res.status(401).json({ message: "Unauthorized" });
       }
       
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      
-      if (!user) {
-        console.error(`User ${userId} not found in database`);
-        return res.status(404).json({ message: "User not found" });
+      // Check if this is a Replit Auth user (has claims.sub)
+      if (req.user.claims?.sub) {
+        const userId = req.user.claims.sub;
+        const user = await storage.getUser(userId);
+        
+        if (!user) {
+          console.error(`User ${userId} not found in database`);
+          return res.status(404).json({ message: "User not found" });
+        }
+        
+        return res.json(user);
       }
       
-      res.json(user);
+      // Local auth user - user object stored directly in session
+      if (req.user.id) {
+        const { passwordHash, ...userWithoutPassword } = req.user;
+        return res.json(userWithoutPassword);
+      }
+      
+      return res.status(401).json({ message: "Unauthorized - invalid session" });
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
