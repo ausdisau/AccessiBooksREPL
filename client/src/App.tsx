@@ -20,6 +20,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { AudioProvider, useAudioContext } from "@/contexts/AudioContext";
+import { MiniPlayer } from "@/components/mini-player";
 
 type View = "library" | "player";
 
@@ -396,20 +398,36 @@ function MainApp() {
   const [currentView, setCurrentView] = useState<View>("library");
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const { toggleHighContrast } = useAccessibility();
+  const { currentBook, playBook, togglePlayPause, skip, changeSpeed } = useAudioContext();
 
   const handleSelectBook = (book: Book) => {
     setSelectedBook(book);
+    playBook(book);
     setCurrentView("player");
   };
 
   const handleBackToLibrary = () => {
     setCurrentView("library");
   };
+  
+  const handleExpandPlayer = () => {
+    if (currentBook) {
+      setSelectedBook(currentBook);
+      setCurrentView("player");
+    }
+  };
 
   // Global keyboard shortcuts
   useKeyboardShortcuts({
     onHighContrast: toggleHighContrast,
+    onPlayPause: togglePlayPause,
+    onSkipBackward: () => skip(-15),
+    onSkipForward: () => skip(15),
+    onSpeedUp: () => changeSpeed(0.25),
+    onSpeedDown: () => changeSpeed(-0.25),
   });
+
+  const hasMiniPlayer = currentBook !== null;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -452,8 +470,8 @@ function MainApp() {
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground"
               }`}
-              onClick={() => selectedBook && setCurrentView("player")}
-              disabled={!selectedBook}
+              onClick={() => (selectedBook || currentBook) && setCurrentView("player")}
+              disabled={!selectedBook && !currentBook}
               role="tab"
               aria-selected={currentView === "player"}
               aria-controls="player-panel"
@@ -466,8 +484,11 @@ function MainApp() {
         </div>
       </nav>
 
-      {/* Main content */}
-      <main id="main-content" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Main content with bottom padding for mini player */}
+      <main 
+        id="main-content" 
+        className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 ${hasMiniPlayer ? "pb-24" : ""}`}
+      >
         {currentView === "library" ? (
           <div
             id="library-panel"
@@ -484,10 +505,13 @@ function MainApp() {
             aria-labelledby="player-tab"
             data-testid="panel-player"
           >
-            <Player book={selectedBook} onBackToLibrary={handleBackToLibrary} />
+            <Player book={selectedBook || currentBook} onBackToLibrary={handleBackToLibrary} />
           </div>
         )}
       </main>
+      
+      {/* Persistent mini player */}
+      <MiniPlayer onExpand={handleExpandPlayer} />
     </div>
   );
 }
@@ -508,8 +532,10 @@ function App() {
 
   return (
     <TooltipProvider>
-      {isAuthenticated ? <MainApp /> : <LandingPage />}
-      <Toaster />
+      <AudioProvider>
+        {isAuthenticated ? <MainApp /> : <LandingPage />}
+        <Toaster />
+      </AudioProvider>
     </TooltipProvider>
   );
 }
