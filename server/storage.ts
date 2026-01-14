@@ -1,9 +1,9 @@
-import { type Book, type InsertBook, type User, type InsertUser, type UpsertUser, users } from "@shared/schema";
+import { type Book, type InsertBook, type User, type InsertUser, type UpsertUser, users, listeningHistory, type ListeningHistory, type InsertListeningHistory } from "@shared/schema";
 import { randomUUID } from "crypto";
 import session from "express-session";
 import createMemoryStore from "memorystore";
 import { db } from "./db";
-import { eq } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 
 const MemoryStore = createMemoryStore(session);
 
@@ -40,6 +40,20 @@ export interface IStorage {
     subscriptionEndDate?: Date | null;
   }): Promise<User | undefined>;
   getUserByStripeCustomerId(stripeCustomerId: string): Promise<User | undefined>;
+  
+  // Listening history
+  getListeningHistory(userId: string, limit?: number): Promise<ListeningHistory[]>;
+  updateListeningProgress(userId: string, bookId: string, progress: {
+    currentTime: number;
+    bookTitle: string;
+    bookAuthor?: string;
+    bookCover?: string;
+    totalDuration?: number;
+  }): Promise<ListeningHistory>;
+  getContinueListening(userId: string, limit?: number): Promise<ListeningHistory[]>;
+  
+  // Chapters
+  getBookChapters(bookId: string): Promise<Chapter[]>;
   
   // Security
   validateAudioUrl(url: string): boolean;
@@ -208,6 +222,14 @@ interface LibriVoxSection {
   listen_url: string;
   playtime: string;
   section_number: string;
+}
+
+export interface Chapter {
+  id: string;
+  title: string;
+  audioUrl: string;
+  duration: string;
+  chapterNumber: number;
 }
 
 interface LibriVoxBook {
@@ -1583,6 +1605,137 @@ export class ExternalAPIStorage implements IStorage {
     } catch (error) {
       console.error(`Error looking up user by Stripe customer ID:`, error);
       return undefined;
+    }
+  }
+
+  // Listening history methods
+  async getListeningHistory(userId: string, limit: number = 50): Promise<ListeningHistory[]> {
+    try {
+      const history = await db
+        .select()
+        .from(listeningHistory)
+        .where(eq(listeningHistory.userId, userId))
+        .orderBy(desc(listeningHistory.lastPlayedAt))
+        .limit(limit);
+      return history;
+    } catch (error) {
+      console.error(`Error getting listening history for user ${userId}:`, error);
+      return [];
+    }
+  }
+
+  async updateListeningProgress(userId: string, bookId: string, progress: {
+    currentTime: number;
+    bookTitle: string;
+    bookAuthor?: string;
+    bookCover?: string;
+    totalDuration?: number;
+  }): Promise<ListeningHistory> {
+    try {
+      // Check if entry already exists
+      const [existing] = await db
+        .select()
+        .from(listeningHistory)
+        .where(and(
+          eq(listeningHistory.userId, userId),
+          eq(listeningHistory.bookId, bookId)
+        ));
+
+      if (existing) {
+        // Update existing entry
+        const isCompleted = progress.totalDuration && progress.currentTime >= progress.totalDuration * 0.95;
+        const [updated] = await db
+          .update(listeningHistory)
+          .set({
+            currentTime: progress.currentTime,
+            lastPlayedAt: new Date(),
+            playCount: existing.playCount + 1,
+            completedAt: isCompleted && !existing.completedAt ? new Date() : existing.completedAt,
+            totalDuration: progress.totalDuration || existing.totalDuration,
+          })
+          .where(eq(listeningHistory.id, existing.id))
+          .returning();
+        return updated;
+      } else {
+        // Create new entry
+        const [created] = await db
+          .insert(listeningHistory)
+          .values({
+            userId,
+            bookId,
+            bookTitle: progress.bookTitle,
+            bookAuthor: progress.bookAuthor,
+            bookCover: progress.bookCover,
+            currentTime: progress.currentTime,
+            totalDuration: progress.totalDuration,
+          })
+          .returning();
+        return created;
+      }
+    } catch (error) {
+      console.error(`Error updating listening progress:`, error);
+      throw error;
+    }
+  }
+
+  async getContinueListening(userId: string, limit: number = 10): Promise<ListeningHistory[]> {
+    try {
+      // Get books that are in progress (started but not completed)
+      const history = await db
+        .select()
+        .from(listeningHistory)
+        .where(and(
+          eq(listeningHistory.userId, userId)
+        ))
+        .orderBy(desc(listeningHistory.lastPlayedAt))
+        .limit(limit);
+      
+      // Filter to only in-progress books (currentTime > 0 and not completed)
+      return history.filter(h => 
+        h.currentTime > 0 && 
+        (!h.completedAt || (h.totalDuration && h.currentTime < h.totalDuration * 0.95))
+      );
+    } catch (error) {
+      console.error(`Error getting continue listening for user ${userId}:`, error);
+      return [];
+    }
+  }
+
+  async getBookChapters(bookId: string): Promise<Chapter[]> {
+    try {
+      // Only LibriVox books have chapters
+      if (!bookId.startsWith("librivox-")) {
+        return [];
+      }
+
+      const librivoxId = bookId.replace("librivox-", "");
+      console.log(`Fetching chapters for LibriVox book: ${librivoxId}`);
+
+      const url = `${LIBRIVOX_API_BASE}?id=${librivoxId}&format=json&extended=1`;
+      const response = await fetchWithTimeout(url, 10000);
+
+      if (response.ok) {
+        const responseData = await response.json();
+        
+        if (responseData.books && Array.isArray(responseData.books) && responseData.books.length > 0) {
+          const book = responseData.books[0] as LibriVoxBook;
+          
+          if (book.sections && Array.isArray(book.sections)) {
+            return book.sections.map((section: LibriVoxSection) => ({
+              id: section.id,
+              title: section.title || `Chapter ${section.section_number}`,
+              audioUrl: section.listen_url,
+              duration: section.playtime,
+              chapterNumber: parseInt(section.section_number, 10) || 0,
+            }));
+          }
+        }
+      }
+
+      return [];
+    } catch (error) {
+      console.error(`Error fetching chapters for book ${bookId}:`, error);
+      return [];
     }
   }
 }

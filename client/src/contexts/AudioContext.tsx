@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useRef, useEffect, ReactNode } from "react";
 import { Book, Progress } from "@shared/schema";
 import { localStorageService } from "@/lib/storage";
+import { apiRequest } from "@/lib/queryClient";
+import { useAuth } from "@/hooks/useAuth";
 
 interface AudioContextType {
   currentBook: Book | null;
@@ -10,6 +12,8 @@ interface AudioContextType {
   duration: number;
   playbackRate: number;
   isLoading: boolean;
+  sleepTimer: number | null;
+  sleepTimerRemaining: number | null;
   setCurrentBook: (book: Book | null) => void;
   togglePlayPause: () => Promise<void>;
   skip: (seconds: number) => void;
@@ -17,6 +21,8 @@ interface AudioContextType {
   changeSpeed: (delta: number) => void;
   formatTime: (seconds: number) => string;
   playBook: (book: Book) => void;
+  setSleepTimer: (minutes: number | null) => void;
+  cancelSleepTimer: () => void;
 }
 
 const AudioContext = createContext<AudioContextType | null>(null);
@@ -30,6 +36,7 @@ export function useAudioContext() {
 }
 
 export function AudioProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [currentBook, setCurrentBook] = useState<Book | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -37,6 +44,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1.0);
   const [isLoading, setIsLoading] = useState(false);
+  const [sleepTimer, setSleepTimerState] = useState<number | null>(null);
+  const [sleepTimerRemaining, setSleepTimerRemaining] = useState<number | null>(null);
+  const sleepTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (currentBook) {
@@ -61,11 +71,25 @@ export function AudioProvider({ children }: { children: ReactNode }) {
           lastPlayed: new Date().toISOString(),
         };
         localStorageService.saveProgress(progress);
+        
+        // Only sync to server for authenticated users
+        if (user) {
+          apiRequest("POST", "/api/history/progress", {
+            bookId: currentBook.id,
+            currentTime,
+            bookTitle: currentBook.title,
+            bookAuthor: currentBook.author,
+            bookCover: currentBook.coverImage,
+            totalDuration: duration || currentBook.duration,
+          }).catch(() => {
+            // Silently fail - local storage is the fallback
+          });
+        }
       }
-    }, 5000);
+    }, 10000); // Save every 10 seconds to reduce server load
 
     return () => clearInterval(interval);
-  }, [currentBook?.id, isPlaying, currentTime]);
+  }, [currentBook?.id, isPlaying, currentTime, duration, user]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -179,6 +203,59 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     }, 100);
   };
 
+  const setSleepTimer = (minutes: number | null) => {
+    if (sleepTimerRef.current) {
+      clearInterval(sleepTimerRef.current);
+      sleepTimerRef.current = null;
+    }
+
+    if (minutes === null) {
+      setSleepTimerState(null);
+      setSleepTimerRemaining(null);
+      return;
+    }
+
+    const totalSeconds = minutes * 60;
+    setSleepTimerState(minutes);
+    setSleepTimerRemaining(totalSeconds);
+
+    sleepTimerRef.current = setInterval(() => {
+      setSleepTimerRemaining((prev) => {
+        if (prev === null || prev <= 1) {
+          if (sleepTimerRef.current) {
+            clearInterval(sleepTimerRef.current);
+            sleepTimerRef.current = null;
+          }
+          const audio = audioRef.current;
+          if (audio && !audio.paused) {
+            audio.pause();
+            setIsPlaying(false);
+          }
+          setSleepTimerState(null);
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  const cancelSleepTimer = () => {
+    if (sleepTimerRef.current) {
+      clearInterval(sleepTimerRef.current);
+      sleepTimerRef.current = null;
+    }
+    setSleepTimerState(null);
+    setSleepTimerRemaining(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (sleepTimerRef.current) {
+        clearInterval(sleepTimerRef.current);
+      }
+    };
+  }, []);
+
   return (
     <AudioContext.Provider
       value={{
@@ -189,6 +266,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         duration,
         playbackRate,
         isLoading,
+        sleepTimer,
+        sleepTimerRemaining,
         setCurrentBook,
         togglePlayPause,
         skip,
@@ -196,6 +275,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         changeSpeed,
         formatTime,
         playBook,
+        setSleepTimer,
+        cancelSleepTimer,
       }}
     >
       <audio ref={audioRef} preload="metadata" />

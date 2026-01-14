@@ -5,7 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BookCard } from "@/components/book-card";
 import { AdBanner } from "@/components/ad-banner";
-import { Search } from "lucide-react";
+import { ContinueListening } from "@/components/continue-listening";
+import { GenreCards } from "@/components/genre-cards";
+import { ForYouSection } from "@/components/for-you-section";
+import { Search, Library as LibraryIcon } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
 interface LibraryProps {
   onSelectBook: (book: Book) => void;
@@ -14,17 +18,25 @@ interface LibraryProps {
 export function Library({ onSelectBook }: LibraryProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("title");
+  const [selectedGenre, setSelectedGenre] = useState<string | null>(null);
+  const { user } = useAuth();
 
   const { data: books = [], isLoading, error } = useQuery<Book[]>({
     queryKey: ["/api/books"],
   });
 
   const filteredAndSortedBooks = books
-    .filter(book => 
-      book.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      book.author.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (book.genre && book.genre.toLowerCase().includes(searchQuery.toLowerCase()))
-    )
+    .filter(book => {
+      const matchesSearch = 
+        book.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        book.author.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (book.genre && book.genre.toLowerCase().includes(searchQuery.toLowerCase()));
+      
+      const matchesGenre = !selectedGenre || 
+        (book.genre && book.genre.toLowerCase().includes(selectedGenre.toLowerCase()));
+      
+      return matchesSearch && matchesGenre;
+    })
     .sort((a, b) => {
       switch (sortBy) {
         case "author":
@@ -38,6 +50,11 @@ export function Library({ onSelectBook }: LibraryProps) {
       }
     });
 
+  const handleGenreSelect = (genre: string) => {
+    setSelectedGenre(genre || null);
+    setSearchQuery("");
+  };
+
   if (error) {
     return (
       <div className="text-center py-12">
@@ -48,10 +65,40 @@ export function Library({ onSelectBook }: LibraryProps) {
     );
   }
 
+  const showPersonalizedSections = user && !searchQuery && !isLoading;
+
   return (
     <div>
+      {/* Continue Listening - only show when logged in and not searching */}
+      {showPersonalizedSections && (
+        <ContinueListening onSelectBook={onSelectBook} books={books} />
+      )}
+
+      {/* For You recommendations - only show when logged in and not searching */}
+      {showPersonalizedSections && (
+        <ForYouSection books={books} onSelectBook={onSelectBook} />
+      )}
+
+      {/* Genre browsing */}
+      {!isLoading && books.length > 0 && !searchQuery && (
+        <GenreCards 
+          books={books} 
+          onGenreSelect={handleGenreSelect}
+          selectedGenre={selectedGenre}
+        />
+      )}
+
+      {/* Ad banner for free users */}
+      <AdBanner variant="library" />
+
       {/* Search and filters */}
-      <div className="mb-8">
+      <div className="mb-6">
+        <div className="flex items-center gap-2 mb-4">
+          <LibraryIcon className="h-5 w-5 text-primary" />
+          <h2 className="text-xl font-semibold">
+            {selectedGenre ? `${selectedGenre.charAt(0).toUpperCase() + selectedGenre.slice(1)} Books` : "All Audiobooks"}
+          </h2>
+        </div>
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
           <div className="flex-1 max-w-md">
             <label htmlFor="search-books" className="sr-only">
@@ -64,7 +111,10 @@ export function Library({ onSelectBook }: LibraryProps) {
                 type="search"
                 placeholder="Search by title, author, or genre..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (e.target.value) setSelectedGenre(null);
+                }}
                 className="pl-10"
                 data-testid="input-search"
               />
@@ -89,9 +139,6 @@ export function Library({ onSelectBook }: LibraryProps) {
           </div>
         </div>
       </div>
-
-      {/* Ad banner for free users */}
-      <AdBanner variant="library" />
 
       {/* Books grid */}
       {isLoading ? (

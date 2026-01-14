@@ -55,8 +55,16 @@ Preferred communication style: Simple, everyday language.
 ### Audio Player System
 - **Playback Engine**: HTML5 audio with custom React hooks for state management
 - **Features**: Variable speed playback, skip forward/backward, progress tracking, bookmark system
-- **Progress Persistence**: Automatic saving of playback position every 5 seconds
+- **Progress Persistence**: Automatic saving of playback position every 5 seconds (local storage + database for logged-in users)
 - **Bookmark Management**: User-created bookmarks with custom names and timestamp navigation
+- **Sleep Timer**: Configurable sleep timer (5, 15, 30, 45, 60 minutes) with countdown display
+- **Chapter Navigation**: LibriVox books display chapter list with direct chapter selection
+
+### Personalization Features
+- **Continue Listening**: Shows in-progress books at top of library
+- **For You Section**: Personalized recommendations based on listening history and genres
+- **Genre Browsing**: Visual genre cards with accessible color schemes for filtering
+- **Listening History**: Database-tracked history synced every 10 seconds for logged-in users
 
 ## External Dependencies
 

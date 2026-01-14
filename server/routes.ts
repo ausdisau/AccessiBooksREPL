@@ -114,6 +114,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // GET /api/books/:id/chapters - Get chapters for a book (LibriVox only)
+  app.get("/api/books/:id/chapters", async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      // Only LibriVox books have chapters
+      if (!id.startsWith("librivox-")) {
+        return res.json([]);
+      }
+      
+      const chapters = await storage.getBookChapters(id);
+      res.json(chapters);
+    } catch (error) {
+      console.error("Error fetching chapters:", error);
+      res.status(500).json({ message: "Failed to fetch chapters" });
+    }
+  });
+
   // GET /api/stream/:id - Stream audio (redirect to actual audio URL)
   app.get("/api/stream/:id", async (req, res) => {
     try {
@@ -379,6 +397,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error cancelling subscription:", error);
       res.status(500).json({ message: "Failed to cancel subscription" });
+    }
+  });
+  
+  // ============== LISTENING HISTORY API ==============
+  
+  // GET /api/history - Get user's listening history
+  app.get("/api/history", async (req: any, res) => {
+    try {
+      if (!req.isAuthenticated() || !req.user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const userId = req.user.claims?.sub || req.user.id;
+      const limit = parseInt(req.query.limit as string) || 50;
+      const history = await storage.getListeningHistory(userId, limit);
+      
+      res.json(history);
+    } catch (error) {
+      console.error("Error fetching listening history:", error);
+      res.status(500).json({ message: "Failed to fetch listening history" });
+    }
+  });
+  
+  // GET /api/history/continue - Get continue listening items
+  app.get("/api/history/continue", async (req: any, res) => {
+    try {
+      if (!req.isAuthenticated() || !req.user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const userId = req.user.claims?.sub || req.user.id;
+      const limit = parseInt(req.query.limit as string) || 10;
+      const continueListening = await storage.getContinueListening(userId, limit);
+      
+      res.json(continueListening);
+    } catch (error) {
+      console.error("Error fetching continue listening:", error);
+      res.status(500).json({ message: "Failed to fetch continue listening" });
+    }
+  });
+  
+  // POST /api/history/progress - Update listening progress
+  app.post("/api/history/progress", async (req: any, res) => {
+    try {
+      if (!req.isAuthenticated() || !req.user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const userId = req.user.claims?.sub || req.user.id;
+      const { bookId, currentTime, bookTitle, bookAuthor, bookCover, totalDuration } = req.body;
+      
+      if (!bookId || currentTime === undefined || !bookTitle) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+      
+      const history = await storage.updateListeningProgress(userId, bookId, {
+        currentTime,
+        bookTitle,
+        bookAuthor,
+        bookCover,
+        totalDuration,
+      });
+      
+      res.json(history);
+    } catch (error) {
+      console.error("Error updating listening progress:", error);
+      res.status(500).json({ message: "Failed to update progress" });
     }
   });
   

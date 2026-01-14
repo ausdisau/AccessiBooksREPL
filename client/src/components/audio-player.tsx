@@ -6,6 +6,9 @@ import { Slider } from "@/components/ui/slider";
 import { useAudioPlayer } from "@/hooks/use-audio-player";
 import { useBookmarks } from "@/hooks/use-bookmarks";
 import { BookmarkList } from "./bookmark-list";
+import { SleepTimer } from "./sleep-timer";
+import { ChapterList } from "./chapter-list";
+import { useToast } from "@/hooks/use-toast";
 import { 
   Play, 
   Pause, 
@@ -42,6 +45,21 @@ export function AudioPlayer({ book }: AudioPlayerProps) {
   const { bookmarks, addBookmark, removeBookmark } = useBookmarks(book.id);
   const [bookmarkName, setBookmarkName] = useState("");
   const [showBookmarkInput, setShowBookmarkInput] = useState(false);
+  const [currentChapterId, setCurrentChapterId] = useState<string | undefined>();
+  const { toast } = useToast();
+
+  const handleChapterSelect = (chapter: { id: string; title: string; audioUrl: string }) => {
+    setCurrentChapterId(chapter.id);
+    if (audioRef.current) {
+      audioRef.current.src = chapter.audioUrl;
+      audioRef.current.load();
+      audioRef.current.play().catch(console.error);
+    }
+    toast({
+      title: "Now playing",
+      description: chapter.title,
+    });
+  };
 
   const handleAddBookmark = () => {
     if (showBookmarkInput && bookmarkName.trim()) {
@@ -199,6 +217,8 @@ export function AudioPlayer({ book }: AudioPlayerProps) {
             </div>
             
             <div className="flex items-center space-x-2">
+              <SleepTimer />
+              
               {showBookmarkInput && (
                 <input
                   type="text"
@@ -249,6 +269,15 @@ export function AudioPlayer({ book }: AudioPlayerProps) {
         onRemove={removeBookmark}
         formatTime={formatTime}
       />
+
+      {/* Chapter navigation for LibriVox books */}
+      {book.id.startsWith("librivox-") && (
+        <ChapterList
+          bookId={book.id}
+          onChapterSelect={handleChapterSelect}
+          currentChapterId={currentChapterId}
+        />
+      )}
     </div>
   );
 }

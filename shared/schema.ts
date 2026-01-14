@@ -70,6 +70,32 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
 
+// Listening history table for tracking user activity
+export const listeningHistory = pgTable("listening_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  bookId: varchar("book_id").notNull(),
+  bookTitle: text("book_title").notNull(),
+  bookAuthor: text("book_author"),
+  bookCover: text("book_cover"),
+  currentTime: integer("current_time").notNull().default(0), // Progress in seconds
+  totalDuration: integer("total_duration"), // Book duration in seconds
+  lastPlayedAt: timestamp("last_played_at").defaultNow(),
+  completedAt: timestamp("completed_at"), // When user finished the book
+  playCount: integer("play_count").notNull().default(1),
+}, (table) => [
+  index("idx_listening_history_user").on(table.userId),
+  index("idx_listening_history_last_played").on(table.lastPlayedAt),
+]);
+
+export const insertListeningHistorySchema = createInsertSchema(listeningHistory).omit({
+  id: true,
+  lastPlayedAt: true,
+});
+
+export type InsertListeningHistory = z.infer<typeof insertListeningHistorySchema>;
+export type ListeningHistory = typeof listeningHistory.$inferSelect;
+
 // Bookmark type for frontend use
 export interface Bookmark {
   id: string;
