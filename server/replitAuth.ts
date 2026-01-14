@@ -123,13 +123,25 @@ export async function setupAuth(app: Express) {
   });
 
   app.get("/api/logout", (req, res) => {
+    const user = req.user as any;
+    const isOidcUser = user?.claims?.sub; // OIDC users have claims.sub
+    
     req.logout(() => {
-      res.redirect(
-        client.buildEndSessionUrl(config, {
-          client_id: process.env.REPL_ID!,
-          post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
-        }).href
-      );
+      // Clear session
+      req.session?.destroy(() => {});
+      
+      // For OIDC users, redirect to end session URL
+      // For local auth users, just redirect to home
+      if (isOidcUser) {
+        res.redirect(
+          client.buildEndSessionUrl(config, {
+            client_id: process.env.REPL_ID!,
+            post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
+          }).href
+        );
+      } else {
+        res.redirect("/");
+      }
     });
   });
 }
