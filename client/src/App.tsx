@@ -14,7 +14,7 @@ import { useAccessibility } from "@/hooks/use-accessibility";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Book as BookIcon, Play, LogOut, User, Loader2, Mail, Lock, Eye, EyeOff } from "lucide-react";
+import { Book as BookIcon, Play, LogOut, User, Loader2, Mail, Lock, Eye, EyeOff, Crown, Settings } from "lucide-react";
 import { SiFacebook } from "react-icons/si";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -22,6 +22,9 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { AudioProvider, useAudioContext } from "@/contexts/AudioContext";
 import { MiniPlayer } from "@/components/mini-player";
+import { PremiumBadge } from "@/components/premium-badge";
+import { SubscriptionCard } from "@/components/subscription-card";
+import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 
 type View = "library" | "player";
 
@@ -44,6 +47,8 @@ function AppHeader() {
             
             {user && (
               <div className="flex items-center space-x-2 pl-4 border-l border-border">
+                <PremiumBadge showUpgrade />
+                
                 <div className="flex items-center space-x-2">
                   <User className="h-4 w-4 text-muted-foreground" />
                   <span className="text-sm font-medium" data-testid="text-username">
@@ -53,6 +58,22 @@ function AppHeader() {
                     }
                   </span>
                 </div>
+                
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label="Subscription settings"
+                      data-testid="button-subscription"
+                    >
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-md">
+                    <SubscriptionCard />
+                  </DialogContent>
+                </Dialog>
                 
                 <Button
                   variant="ghost"

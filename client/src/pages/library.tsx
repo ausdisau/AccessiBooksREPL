@@ -4,6 +4,7 @@ import { Book } from "@shared/schema";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BookCard } from "@/components/book-card";
+import { AdBanner } from "@/components/ad-banner";
 import { Search } from "lucide-react";
 
 interface LibraryProps {
@@ -88,6 +89,9 @@ export function Library({ onSelectBook }: LibraryProps) {
           </div>
         </div>
       </div>
+
+      {/* Ad banner for free users */}
+      <AdBanner variant="library" />
 
       {/* Books grid */}
       {isLoading ? (

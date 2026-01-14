@@ -32,6 +32,15 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   authenticateExternalUser(username: string, password: string): Promise<User | null>;
   
+  // Subscription management
+  updateUserSubscription(userId: string, subscription: {
+    stripeCustomerId?: string;
+    stripeSubscriptionId?: string | null;
+    subscriptionTier?: string;
+    subscriptionEndDate?: Date | null;
+  }): Promise<User | undefined>;
+  getUserByStripeCustomerId(stripeCustomerId: string): Promise<User | undefined>;
+  
   // Security
   validateAudioUrl(url: string): boolean;
   
@@ -237,6 +246,10 @@ function transformExternalUser(externalUser: ExternalUser): User {
     passwordHash: null,
     authProvider: "external",
     providerId: externalUser._id,
+    subscriptionTier: "free",
+    stripeCustomerId: null,
+    stripeSubscriptionId: null,
+    subscriptionEndDate: null,
     createdAt: externalUser.createdAt ? new Date(externalUser.createdAt) : new Date(),
     updatedAt: externalUser.updatedAt ? new Date(externalUser.updatedAt) : new Date(),
   };
@@ -1519,6 +1532,57 @@ export class ExternalAPIStorage implements IStorage {
     } catch (error) {
       console.warn(`Failed to fetch LibriVox book ${id}:`, error);
       return null;
+    }
+  }
+
+  async updateUserSubscription(userId: string, subscription: {
+    stripeCustomerId?: string;
+    stripeSubscriptionId?: string | null;
+    subscriptionTier?: string;
+    subscriptionEndDate?: Date | null;
+  }): Promise<User | undefined> {
+    try {
+      console.log(`Updating subscription for user ${userId}:`, subscription);
+      
+      const updateData: Partial<typeof users.$inferInsert> = {
+        updatedAt: new Date(),
+      };
+      
+      if (subscription.stripeCustomerId !== undefined) {
+        updateData.stripeCustomerId = subscription.stripeCustomerId;
+      }
+      if (subscription.stripeSubscriptionId !== undefined) {
+        updateData.stripeSubscriptionId = subscription.stripeSubscriptionId;
+      }
+      if (subscription.subscriptionTier !== undefined) {
+        updateData.subscriptionTier = subscription.subscriptionTier;
+      }
+      if (subscription.subscriptionEndDate !== undefined) {
+        updateData.subscriptionEndDate = subscription.subscriptionEndDate;
+      }
+      
+      const [updatedUser] = await db
+        .update(users)
+        .set(updateData)
+        .where(eq(users.id, userId))
+        .returning();
+      
+      console.log(`Successfully updated subscription for user ${updatedUser?.id}`);
+      return updatedUser;
+    } catch (error) {
+      console.error(`Error updating subscription for user ${userId}:`, error);
+      return undefined;
+    }
+  }
+
+  async getUserByStripeCustomerId(stripeCustomerId: string): Promise<User | undefined> {
+    try {
+      console.log(`Looking up user by Stripe customer ID: ${stripeCustomerId}`);
+      const [user] = await db.select().from(users).where(eq(users.stripeCustomerId, stripeCustomerId));
+      return user;
+    } catch (error) {
+      console.error(`Error looking up user by Stripe customer ID:`, error);
+      return undefined;
     }
   }
 }

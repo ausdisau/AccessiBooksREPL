@@ -5,6 +5,7 @@ import { z } from "zod";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { setupMultiAuth } from "./multiAuth";
 import { getUncachableSpotifyClient, isSpotifyConnected } from "./spotifyClient";
+import { stripe, PREMIUM_PRICE_MONTHLY, SUBSCRIPTION_CONFIG } from "./stripe";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Enable CORS for same-origin requests (more secure than wildcard)
@@ -243,6 +244,310 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Spotify library error:", error);
       res.status(500).json({ message: "Failed to fetch Spotify library" });
     }
+  });
+
+  // Stripe subscription routes
+  
+  // GET /api/subscription/status - Get current subscription status
+  app.get("/api/subscription/status", async (req: any, res) => {
+    try {
+      if (!req.isAuthenticated() || !req.user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const userId = req.user.claims?.sub || req.user.id;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      res.json({
+        subscriptionTier: user.subscriptionTier || "free",
+        subscriptionEndDate: user.subscriptionEndDate,
+        stripeSubscriptionId: user.stripeSubscriptionId,
+        isPremium: user.subscriptionTier === "premium",
+      });
+    } catch (error) {
+      console.error("Error fetching subscription status:", error);
+      res.status(500).json({ message: "Failed to fetch subscription status" });
+    }
+  });
+  
+  // POST /api/subscription/create-checkout - Create Stripe checkout session
+  app.post("/api/subscription/create-checkout", async (req: any, res) => {
+    try {
+      if (!stripe) {
+        return res.status(503).json({ message: "Payment system not configured" });
+      }
+      
+      if (!req.isAuthenticated() || !req.user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const userId = req.user.claims?.sub || req.user.id;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      // Get or create Stripe customer
+      let customerId = user.stripeCustomerId;
+      
+      if (!customerId) {
+        const customer = await stripe.customers.create({
+          email: user.email || undefined,
+          metadata: {
+            userId: user.id,
+          },
+        });
+        customerId = customer.id;
+        
+        // Save customer ID to database
+        await storage.updateUserSubscription(userId, { stripeCustomerId: customerId });
+      }
+      
+      // Create checkout session for subscription
+      const session = await stripe.checkout.sessions.create({
+        customer: customerId,
+        mode: "subscription",
+        payment_method_types: ["card"],
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: {
+                name: SUBSCRIPTION_CONFIG.productName,
+                description: "Ad-free listening, unlimited bookmarks, exclusive content",
+              },
+              unit_amount: PREMIUM_PRICE_MONTHLY,
+              recurring: {
+                interval: "month",
+              },
+            },
+            quantity: 1,
+          },
+        ],
+        success_url: `${req.headers.origin || "http://localhost:5000"}?subscription=success`,
+        cancel_url: `${req.headers.origin || "http://localhost:5000"}?subscription=cancelled`,
+        metadata: {
+          userId: user.id,
+        },
+      });
+      
+      res.json({ url: session.url });
+    } catch (error) {
+      console.error("Error creating checkout session:", error);
+      res.status(500).json({ message: "Failed to create checkout session" });
+    }
+  });
+  
+  // POST /api/subscription/cancel - Cancel subscription
+  app.post("/api/subscription/cancel", async (req: any, res) => {
+    try {
+      if (!stripe) {
+        return res.status(503).json({ message: "Payment system not configured" });
+      }
+      
+      if (!req.isAuthenticated() || !req.user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      
+      const userId = req.user.claims?.sub || req.user.id;
+      const user = await storage.getUser(userId);
+      
+      if (!user || !user.stripeSubscriptionId) {
+        return res.status(400).json({ message: "No active subscription found" });
+      }
+      
+      // Cancel at period end (don't cancel immediately)
+      const subscription = await stripe.subscriptions.update(user.stripeSubscriptionId, {
+        cancel_at_period_end: true,
+      });
+      
+      // Update the database with cancellation info
+      const cancelAt = subscription.cancel_at ? new Date(subscription.cancel_at * 1000) : null;
+      await storage.updateUserSubscription(userId, {
+        subscriptionEndDate: cancelAt,
+      });
+      
+      res.json({
+        message: "Subscription will be cancelled at period end",
+        cancelAt: subscription.cancel_at,
+      });
+    } catch (error) {
+      console.error("Error cancelling subscription:", error);
+      res.status(500).json({ message: "Failed to cancel subscription" });
+    }
+  });
+  
+  // POST /api/webhook/stripe - Stripe webhook handler
+  app.post("/api/webhook/stripe", async (req, res) => {
+    if (!stripe) {
+      return res.status(503).json({ message: "Payment system not configured" });
+    }
+    
+    const sig = req.headers["stripe-signature"] as string;
+    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    
+    let event;
+    
+    try {
+      // In production, always require signature verification
+      if (endpointSecret && sig) {
+        // req.body is raw Buffer when using express.raw() middleware
+        event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+      } else if (process.env.NODE_ENV === "development") {
+        // Only allow unverified webhooks in development (for testing)
+        console.warn("WARNING: Processing unverified Stripe webhook (dev mode only)");
+        event = JSON.parse(req.body.toString());
+      } else {
+        console.error("Webhook secret not configured - rejecting request");
+        return res.status(400).json({ message: "Webhook secret not configured" });
+      }
+    } catch (err: any) {
+      console.error("Webhook signature verification failed:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+    
+    // Handle the event
+    switch (event.type) {
+      case "checkout.session.completed": {
+        const session = event.data.object as any;
+        const userId = session.metadata?.userId;
+        const subscriptionId = session.subscription;
+        const customerId = session.customer;
+        
+        if (userId && subscriptionId) {
+          // Fetch subscription to get current period end
+          let subscriptionEndDate: Date | null = null;
+          try {
+            const subResponse = await stripe.subscriptions.retrieve(subscriptionId as string);
+            const sub = subResponse as any;
+            if (sub.current_period_end) {
+              subscriptionEndDate = new Date(sub.current_period_end * 1000);
+            }
+            // Also update the subscription metadata with userId for future lookups
+            await stripe.subscriptions.update(subscriptionId as string, {
+              metadata: { userId },
+            });
+          } catch (e) {
+            console.warn("Could not fetch subscription details:", e);
+          }
+          
+          // Persist stripeCustomerId along with subscription details
+          await storage.updateUserSubscription(userId, {
+            stripeCustomerId: customerId as string,
+            stripeSubscriptionId: subscriptionId as string,
+            subscriptionTier: "premium",
+            subscriptionEndDate,
+          });
+          console.log(`User ${userId} upgraded to premium with customer ${customerId}`);
+        }
+        break;
+      }
+      
+      case "customer.subscription.deleted": {
+        const subscription = event.data.object as any;
+        let userId = subscription.metadata?.userId;
+        
+        // Fallback: lookup user by Stripe customer ID if userId not in metadata
+        if (!userId && subscription.customer) {
+          const user = await storage.getUserByStripeCustomerId(subscription.customer);
+          if (user) {
+            userId = user.id;
+          }
+        }
+        
+        if (userId) {
+          await storage.updateUserSubscription(userId, {
+            subscriptionTier: "free",
+            stripeSubscriptionId: null,
+            subscriptionEndDate: null,
+          });
+          console.log(`User ${userId} subscription deleted - downgraded to free`);
+        } else {
+          console.log(`Subscription ${subscription.id} deleted but no userId found`);
+        }
+        break;
+      }
+      
+      case "customer.subscription.updated": {
+        const subUpdated = event.data.object as any;
+        let userId = subUpdated.metadata?.userId;
+        
+        // Fallback: lookup user by Stripe customer ID if userId not in metadata
+        if (!userId && subUpdated.customer) {
+          const user = await storage.getUserByStripeCustomerId(subUpdated.customer);
+          if (user) {
+            userId = user.id;
+          }
+        }
+        
+        if (userId) {
+          if (subUpdated.status === "canceled" || subUpdated.status === "unpaid") {
+            await storage.updateUserSubscription(userId, {
+              subscriptionTier: "free",
+              stripeSubscriptionId: null,
+              subscriptionEndDate: null,
+            });
+            console.log(`User ${userId} downgraded to free (status: ${subUpdated.status})`);
+          } else if (subUpdated.status === "active" && subUpdated.cancel_at_period_end) {
+            // Subscription is active but will cancel at period end
+            const endDate = subUpdated.current_period_end 
+              ? new Date(subUpdated.current_period_end * 1000) 
+              : null;
+            await storage.updateUserSubscription(userId, {
+              subscriptionEndDate: endDate,
+            });
+            console.log(`User ${userId} subscription will cancel at period end`);
+          }
+        }
+        break;
+      }
+      
+      case "invoice.payment_succeeded": {
+        const invoice = event.data.object as any;
+        const subscriptionId = invoice.subscription;
+        const customerId = invoice.customer;
+        
+        if (subscriptionId) {
+          try {
+            const subResponse = await stripe.subscriptions.retrieve(subscriptionId as string);
+            const subData = subResponse as any;
+            let userId = subData.metadata?.userId;
+            
+            // Fallback: lookup user by Stripe customer ID if userId not in metadata
+            if (!userId && customerId) {
+              const user = await storage.getUserByStripeCustomerId(customerId);
+              if (user) {
+                userId = user.id;
+              }
+            }
+            
+            if (userId) {
+              const endDate = subData.current_period_end 
+                ? new Date(subData.current_period_end * 1000) 
+                : null;
+              await storage.updateUserSubscription(userId, {
+                subscriptionTier: "premium",
+                subscriptionEndDate: endDate,
+              });
+              console.log(`User ${userId} subscription renewed`);
+            }
+          } catch (e) {
+            console.warn("Could not process invoice payment:", e);
+          }
+        }
+        break;
+      }
+      
+      default:
+        console.log(`Unhandled event type ${event.type}`);
+    }
+    
+    res.json({ received: true });
   });
 
   const httpServer = createServer(app);

@@ -38,6 +38,10 @@ export const sessions = pgTable(
   (table) => [index("IDX_session_expire").on(table.expire)],
 );
 
+// Subscription tier enum values
+export const SUBSCRIPTION_TIERS = ["free", "premium"] as const;
+export type SubscriptionTier = typeof SUBSCRIPTION_TIERS[number];
+
 // User table for multi-provider authentication
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -48,6 +52,10 @@ export const users = pgTable("users", {
   passwordHash: varchar("password_hash"), // For username/password auth
   authProvider: varchar("auth_provider").default("local"), // local, google, facebook, microsoft, auth0, replit
   providerId: varchar("provider_id"), // ID from OAuth provider
+  subscriptionTier: varchar("subscription_tier").default("free"), // free, premium
+  stripeCustomerId: varchar("stripe_customer_id"), // Stripe customer ID
+  stripeSubscriptionId: varchar("stripe_subscription_id"), // Active Stripe subscription ID
+  subscriptionEndDate: timestamp("subscription_end_date"), // When subscription expires
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

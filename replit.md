@@ -130,3 +130,34 @@ Preferred communication style: Simple, everyday language.
   - Domain whitelist for audio/image URLs (librivox.org, archive.org CDN pattern, covers.openlibrary.org, books.google.com)
   - SSRF protection via URL validation before redirects
   - Dynamic Internet Archive CDN pattern matching (/^ia\d+\.us\.archive\.org$/)
+
+## Monetization System
+
+### Subscription Tiers
+- **Free Tier**: Ad-supported experience with full library access
+- **Premium Tier ($9.99/month)**: Ad-free listening, unlimited bookmarks, priority support
+
+### Stripe Integration
+- **API Version**: 2025-12-15.clover (latest)
+- **Checkout**: Stripe Checkout for secure payment processing
+- **Subscription Management**: Cancel at period end, automatic renewal
+- **Webhook Events**: checkout.session.completed, customer.subscription.updated, customer.subscription.deleted, invoice.payment_succeeded
+- **Security**: Webhook signature verification required in production
+- **Environment Variables**: STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET
+
+### Advertising System
+- **Ad Banner**: Displayed in library view for free users
+- **Premium Upgrade Prompts**: Inline upgrade CTAs with feature highlights
+- **Ad-Free Experience**: Premium users see no ads
+
+### User Schema Extensions
+- `subscriptionTier`: "free" or "premium"
+- `stripeCustomerId`: Stripe customer reference
+- `stripeSubscriptionId`: Active subscription reference
+- `subscriptionEndDate`: Subscription expiration date
+
+### Frontend Components
+- **AdBanner**: Conditional display based on subscription status
+- **SubscriptionCard**: Full subscription management UI
+- **PremiumBadge**: Visual indicator for premium status
+- **useSubscription hook**: React hook for subscription state management
