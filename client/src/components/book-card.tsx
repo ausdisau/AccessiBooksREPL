@@ -1,28 +1,61 @@
 import { Book } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { motion } from "framer-motion";
 import { Play } from "lucide-react";
 
 interface BookCardProps {
   book: Book;
   onPlayBook: (book: Book) => void;
   compact?: boolean;
+  /** Optional index for staggered list animation */
+  index?: number;
 }
 
-export function BookCard({ book, onPlayBook, compact = false }: BookCardProps) {
+const cardVariants = {
+  hidden: { opacity: 0, y: 12 },
+  visible: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: i * 0.04, duration: 0.3 },
+  }),
+};
+
+function handleCardKeyDown(e: React.KeyboardEvent, onActivate: () => void) {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    onActivate();
+  }
+}
+
+export function BookCard({ book, onPlayBook, compact = false, index = 0 }: BookCardProps) {
   const formatDuration = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     return `${hours}h ${minutes}m`;
   };
 
+  const playLabel = `Play ${book.title} by ${book.author}`;
+
   if (compact) {
     return (
-      <Card
-        className="overflow-hidden rounded-xl border border-border hover:border-primary/30 hover:shadow-lg transition-all cursor-pointer group bg-card"
-        data-testid={`card-book-${book.id}`}
-        onClick={() => onPlayBook(book)}
+      <motion.div
+        variants={cardVariants}
+        initial="hidden"
+        animate="visible"
+        custom={index}
+        whileHover={{ y: -4, transition: { duration: 0.2 } }}
+        className="h-full"
       >
+        <Card
+          className="overflow-hidden rounded-xl border border-border hover:border-primary/30 hover:shadow-lg transition-shadow cursor-pointer group bg-card h-full"
+          data-testid={`card-book-${book.id}`}
+          onClick={() => onPlayBook(book)}
+          tabIndex={0}
+          role="button"
+          aria-label={playLabel}
+          onKeyDown={(e) => handleCardKeyDown(e, () => onPlayBook(book))}
+        >
         <CardContent className="p-0">
           <div className="relative aspect-[3/4] overflow-hidden">
             {book.coverImage ? (
@@ -57,11 +90,21 @@ export function BookCard({ book, onPlayBook, compact = false }: BookCardProps) {
           </div>
         </CardContent>
       </Card>
+      </motion.div>
     );
   }
 
   return (
-    <Card className="overflow-hidden rounded-xl border border-border hover:border-primary/30 hover:shadow-xl transition-all focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 bg-card" data-testid={`card-book-${book.id}`}>
+    <motion.div
+      variants={cardVariants}
+      initial="hidden"
+      animate="visible"
+      custom={index}
+      whileHover={{ y: -6, boxShadow: "0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)" }}
+      transition={{ duration: 0.2 }}
+      className="h-full"
+    >
+      <Card className="overflow-hidden rounded-xl border border-border hover:border-primary/30 hover:shadow-xl transition-shadow focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 bg-card h-full" data-testid={`card-book-${book.id}`}>
       <CardContent className="p-0">
         <div className="relative aspect-[3/4] overflow-hidden">
           {book.coverImage ? (
@@ -91,6 +134,7 @@ export function BookCard({ book, onPlayBook, compact = false }: BookCardProps) {
             className="w-full rounded-lg bg-primary hover:bg-primary/90"
             onClick={() => onPlayBook(book)}
             data-testid={`button-play-${book.id}`}
+            aria-label={playLabel}
           >
             <Play className="h-4 w-4 mr-2" aria-hidden="true" />
             Play
@@ -98,5 +142,6 @@ export function BookCard({ book, onPlayBook, compact = false }: BookCardProps) {
         </div>
       </CardContent>
     </Card>
+    </motion.div>
   );
 }

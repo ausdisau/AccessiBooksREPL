@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Play, Clock } from "lucide-react";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Loader } from "@/components/loader";
 
 interface ContinueListeningProps {
   onSelectBook: (book: Book) => void;
@@ -31,11 +32,7 @@ export function ContinueListening({ onSelectBook, books }: ContinueListeningProp
     return (
       <section className="mb-8" aria-label="Continue Listening">
         <h2 className="font-display text-xl font-semibold mb-4">Continue Listening</h2>
-        <div className="flex gap-4 overflow-hidden">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="flex-shrink-0 w-64 h-32 bg-muted rounded-lg animate-pulse" />
-          ))}
-        </div>
+        <Loader variant="inline" message="Loading…" className="py-4" />
       </section>
     );
   }
@@ -51,6 +48,13 @@ export function ContinueListening({ onSelectBook, books }: ContinueListeningProp
     }
   };
 
+  const handleCardKeyDown = (e: React.KeyboardEvent, item: typeof continueItems[0]) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handlePlay(item);
+    }
+  };
+
   return (
     <section className="mb-8" aria-label="Continue Listening">
       <h2 className="font-display text-xl font-semibold mb-4">Continue Listening</h2>
@@ -63,10 +67,17 @@ export function ContinueListening({ onSelectBook, books }: ContinueListeningProp
               : "";
             
             return (
-              <Card
+              <div
                 key={item.id}
-                className="flex-shrink-0 w-72 cursor-pointer rounded-xl border border-border hover:border-primary/30 hover:shadow-md transition-all group"
+                role="button"
+                tabIndex={0}
+                aria-label={`Continue ${item.bookTitle}`}
+                className="flex-shrink-0 w-72 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:rounded-xl"
                 onClick={() => handlePlay(item)}
+                onKeyDown={(e) => handleCardKeyDown(e, item)}
+              >
+              <Card
+                className="w-full cursor-pointer rounded-xl border border-border hover:border-primary/30 hover:shadow-md transition-all group"
               >
                 <CardContent className="p-4">
                   <div className="flex gap-3">
@@ -110,6 +121,7 @@ export function ContinueListening({ onSelectBook, books }: ContinueListeningProp
                   </div>
                 </CardContent>
               </Card>
+              </div>
             );
           })}
         </div>

@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BookCard } from "@/components/book-card";
 import { AdBanner } from "@/components/ad-banner";
+import { motion } from "framer-motion";
 import { ContinueListening } from "@/components/continue-listening";
 import { GenreCards } from "@/components/genre-cards";
 import { ForYouSection } from "@/components/for-you-section";
@@ -131,7 +132,7 @@ export function Library({ onSelectBook }: LibraryProps) {
               Sort
             </label>
             <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger className="w-36 rounded-xl" data-testid="select-sort">
+              <SelectTrigger id="sort-books" className="w-36 rounded-xl" data-testid="select-sort">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -147,7 +148,7 @@ export function Library({ onSelectBook }: LibraryProps) {
 
       {/* Books grid */}
       {isLoading ? (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6" role="status" aria-live="polite" aria-label="Loading audiobooks">
           {Array.from({ length: 10 }).map((_, i) => (
             <div key={i} className="rounded-xl overflow-hidden border border-border animate-pulse">
               <div className="aspect-[3/4] bg-muted" />
@@ -159,26 +160,40 @@ export function Library({ onSelectBook }: LibraryProps) {
           ))}
         </div>
       ) : filteredAndSortedBooks.length === 0 ? (
-        <div className="text-center py-12">
+        <div className="text-center py-12" role="status" aria-live="polite">
           <p className="text-muted-foreground text-lg" data-testid="text-no-books">
             {searchQuery ? "No audiobooks found matching your search." : "No audiobooks available."}
           </p>
         </div>
       ) : (
-        <div
-          className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6"
-          role="list"
+        <motion.ul
+          className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6 list-none p-0 m-0"
           aria-label="Audiobook library"
           data-testid="grid-books"
+          initial="hidden"
+          animate="visible"
+          variants={{
+            hidden: { opacity: 0 },
+            visible: {
+              opacity: 1,
+              transition: { staggerChildren: 0.04, delayChildren: 0.02 },
+            },
+          }}
         >
-          {filteredAndSortedBooks.map((book) => (
-            <BookCard
+          {filteredAndSortedBooks.map((book, i) => (
+            <motion.li
               key={book.id}
-              book={book}
-              onPlayBook={onSelectBook}
-            />
+              className="list-none"
+              variants={{ hidden: { opacity: 0, y: 12 }, visible: { opacity: 1, y: 0 } }}
+            >
+              <BookCard
+                book={book}
+                onPlayBook={onSelectBook}
+                index={i}
+              />
+            </motion.li>
           ))}
-        </div>
+        </motion.ul>
       )}
     </div>
   );

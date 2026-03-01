@@ -1,6 +1,6 @@
 // Based on javascript_auth_all_persistance blueprint
-import { useAuth } from "@/hooks/use-auth";
-import { Loader2 } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { Loader } from "@/components/loader";
 import { Redirect, Route } from "wouter";
 import { ReactNode } from "react";
 
@@ -15,10 +15,7 @@ export function ProtectedRoute({ path, children }: ProtectedRouteProps) {
   if (isLoading) {
     return (
       <Route path={path}>
-        <div className="flex items-center justify-center min-h-screen">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <span className="ml-2 text-lg">Loading...</span>
-        </div>
+        <Loader variant="page" message="Loading…" />
       </Route>
     );
   }

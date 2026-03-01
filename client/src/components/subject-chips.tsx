@@ -49,6 +49,7 @@ export function SubjectChips({ subjects, selectedSubject, onSubjectSelect }: Sub
                 isSelected && "bg-primary text-primary-foreground"
               )}
               data-testid={`chip-subject-${subject}`}
+              aria-pressed={isSelected}
             >
               {label}
             </Button>

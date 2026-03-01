@@ -13,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Loader2, Upload, Trash2, ArrowLeft } from "lucide-react";
+import { Loader } from "@/components/loader";
 import { useToast } from "@/hooks/use-toast";
 
 interface StorageObject {
@@ -181,7 +182,7 @@ export function AdminStoragePage() {
           <CardContent>
             {isLoading && (
               <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <Loader variant="inline" message="Loading storage…" />
               </div>
             )}
             {error && (

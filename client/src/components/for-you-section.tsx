@@ -2,6 +2,7 @@ import { useListeningHistory } from "@/hooks/use-listening-history";
 import { Book } from "@shared/schema";
 import { BookCard } from "@/components/book-card";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
 
 interface ForYouSectionProps {
@@ -60,17 +61,33 @@ export function ForYouSection({ books, onSelectBook }: ForYouSectionProps) {
         <h2 className="font-display text-xl font-semibold">For You</h2>
       </div>
       <ScrollArea className="w-full whitespace-nowrap">
-        <div className="flex gap-4 pb-4">
-          {recommendations.map((book) => (
-            <div key={book.id} className="flex-shrink-0 w-56">
-              <BookCard 
-                book={book} 
+        <motion.div
+          className="flex gap-4 pb-4"
+          initial="hidden"
+          animate="visible"
+          variants={{
+            hidden: { opacity: 0 },
+            visible: {
+              opacity: 1,
+              transition: { staggerChildren: 0.05, delayChildren: 0.02 },
+            },
+          }}
+        >
+          {recommendations.map((book, i) => (
+            <motion.div
+              key={book.id}
+              className="flex-shrink-0 w-56"
+              variants={{ hidden: { opacity: 0, x: -12 }, visible: { opacity: 1, x: 0 } }}
+            >
+              <BookCard
+                book={book}
                 onPlayBook={onSelectBook}
                 compact
+                index={i}
               />
-            </div>
+            </motion.div>
           ))}
-        </div>
+        </motion.div>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
     </section>

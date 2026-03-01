@@ -85,10 +85,35 @@ export default {
             height: "0",
           },
         },
+        "loader-pulse": {
+          "0%, 100%": { opacity: "1", transform: "scale(1)" },
+          "50%": { opacity: "0.7", transform: "scale(1.05)" },
+        },
+        "loader-dots": {
+          "0%, 80%, 100%": { opacity: "0.4" },
+          "40%": { opacity: "1" },
+        },
+        float: {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-8px)" },
+        },
+        "float-slow": {
+          "0%, 100%": { transform: "translateY(0) scale(1)", opacity: "1" },
+          "50%": { transform: "translateY(-6px) scale(1.02)", opacity: "0.9" },
+        },
+        breathe: {
+          "0%, 100%": { transform: "scale(1)" },
+          "50%": { transform: "scale(1.03)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "loader-pulse": "loader-pulse 1.2s ease-in-out infinite",
+        "loader-dots": "loader-dots 1.4s ease-in-out infinite both",
+        float: "float 3s ease-in-out infinite",
+        "float-slow": "float-slow 4s ease-in-out infinite",
+        breathe: "breathe 2.5s ease-in-out infinite",
       },
     },
   },

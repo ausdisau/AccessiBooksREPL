@@ -4,11 +4,13 @@ import session from "express-session";
 import createMemoryStore from "memorystore";
 import { db } from "./db";
 import { eq, desc, and, inArray } from "drizzle-orm";
+import { searchAmazonBooks as amazonPaApiSearch, getAmazonItem } from "./amazonPaApi";
 
 const MemoryStore = createMemoryStore(session);
 
 const EXTERNAL_API_BASE = "https://library-management-api-i6if.onrender.com/api";
 const LIBRIVOX_API_BASE = "https://librivox.org/api/feed/audiobooks";
+const GUTENDEX_API_BASE = "https://gutendex.com/books";
 const OPEN_LIBRARY_API_BASE = "https://openlibrary.org";
 const OPEN_LIBRARY_COVERS_BASE = "https://covers.openlibrary.org";
 const GOOGLE_BOOKS_API_BASE = "https://www.googleapis.com/books/v1";
@@ -254,6 +256,66 @@ interface LibriVoxBook {
   genres?: string[];
 }
 
+// Project Gutenberg (Gutendex API)
+interface GutendexAuthor {
+  name: string;
+  birth_year: number | null;
+  death_year: number | null;
+}
+interface GutendexBook {
+  id: number;
+  title: string;
+  authors: GutendexAuthor[];
+  summaries?: string[];
+  subjects?: string[];
+  bookshelves?: string[];
+  languages: string[];
+  formats: Record<string, string>;
+  download_count?: number;
+}
+
+function transformGutendexBook(g: GutendexBook): Book {
+  const author = g.authors?.length ? g.authors.map((a) => a.name).join(", ") : "Unknown Author";
+  const coverImage = g.formats["image/jpeg"] ?? null;
+  const readUrl = `https://www.gutenberg.org/ebooks/${g.id}`;
+  return {
+    id: `gutenberg-${g.id}`,
+    title: g.title,
+    author,
+    narrator: null,
+    description: g.summaries?.[0] ?? null,
+    duration: 0,
+    coverImage,
+    audioUrl: readUrl,
+    genre: g.subjects?.[0] ?? g.bookshelves?.[0] ?? "Classic Literature",
+    publishedYear: null,
+    source: "gutenberg",
+    sourceId: String(g.id),
+    totalTime: null,
+    language: g.languages?.[0] ? g.languages[0] : "English",
+  };
+}
+
+// Amazon (PA-API) – detailPageUrl used as link to product (no streaming)
+function transformAmazonBook(item: { asin: string; title: string; author: string; detailPageUrl: string; imageUrl: string | null }): Book {
+  return {
+    id: `amazon-${item.asin}`,
+    title: item.title,
+    author: item.author,
+    narrator: null,
+    description: null,
+    duration: 0,
+    coverImage: item.imageUrl,
+    audioUrl: item.detailPageUrl,
+    genre: "Books",
+    publishedYear: null,
+    source: "amazon",
+    sourceId: item.asin,
+    totalTime: null,
+    language: "English",
+  };
+}
+
 interface ExternalUser {
   _id: string;
   username: string;
@@ -353,15 +415,16 @@ function transformGoogleBooksVolume(volume: GoogleBooksVolume): Book {
     ? parseInt(volumeInfo.publishedDate.split('-')[0]) 
     : null;
   
+  const readUrl = volumeInfo.previewLink || volumeInfo.infoLink || `https://books.google.com/books?id=${volume.id}`;
   return {
     id: `googlebooks-${volume.id}`,
     title: volumeInfo.title,
     author: author,
-    narrator: null, // Google Books doesn't have narrator info for ebooks
+    narrator: null,
     description: volumeInfo.description || null,
-    duration: 0, // Google Books is for ebooks, not audiobooks
+    duration: 0,
     coverImage: coverImage,
-    audioUrl: "", // Google Books doesn't provide audio files
+    audioUrl: readUrl.startsWith("http") ? readUrl : `https://books.google.com/books?id=${volume.id}`,
     genre: volumeInfo.categories ? volumeInfo.categories[0] : null,
     publishedYear: publishedYear,
     source: "google-books",
@@ -520,10 +583,15 @@ export class ExternalAPIStorage implements IStorage {
     'librivox.org',
     'archive.org',
     'www.archive.org',
-    'library-management-api-i6if.onrender.com',
-    'covers.openlibrary.org',
+    'www.gutenberg.org',
     'books.google.com',
     'books.googleusercontent.com',
+    'www.amazon.com',
+    'amazon.com',
+    'www.audible.com',
+    'audible.com',
+    'library-management-api-i6if.onrender.com',
+    'covers.openlibrary.org',
     'audio-ssl.itunes.apple.com',
     'mzstatic.com'
   ];
@@ -649,10 +717,9 @@ export class ExternalAPIStorage implements IStorage {
     
     const allBooks: Book[] = [];
     
-    // Parallelize API calls for better performance
-    const fetchPromises = [
-      // LibriVox books
-      this.fetchLibriVoxBooks(30, 0).then(books => {
+    // Source repositories: LibriVox, Project Gutenberg, Google Books (optional), Amazon (optional)
+    const fetchPromises: Promise<Book[]>[] = [
+      this.fetchLibriVoxBooks(50, 0).then(books => {
         const transformed = books.map(transformLibriVoxBook);
         console.log(`Fetched ${transformed.length} books from LibriVox`);
         return transformed;
@@ -660,44 +727,34 @@ export class ExternalAPIStorage implements IStorage {
         console.warn('LibriVox fetch failed:', error instanceof Error ? error.message : 'Unknown error');
         return [];
       }),
-      
-      // Open Library books
-      this.fetchOpenLibraryBooks(20).then((books: OpenLibraryBook[]) => {
-        const transformed = books.map(transformOpenLibraryBook);
-        console.log(`Fetched ${transformed.length} books from Open Library`);
+      this.fetchGutenbergBooks(40).then(books => {
+        const transformed = books.map(transformGutendexBook);
+        console.log(`Fetched ${transformed.length} books from Project Gutenberg`);
         return transformed;
-      }).catch((error: any) => {
-        console.warn('Open Library fetch failed:', error instanceof Error ? error.message : 'Unknown error');
+      }).catch(error => {
+        console.warn('Project Gutenberg fetch failed:', error instanceof Error ? error.message : 'Unknown error');
         return [];
       }),
-      
-      // Google Books
-      this.fetchGoogleBooks(20).then((volumes: GoogleBooksVolume[]) => {
-        const transformed = volumes.map(transformGoogleBooksVolume);
-        console.log(`Fetched ${transformed.length} books from Google Books`);
-        return transformed;
-      }).catch((error: any) => {
-        console.warn('Google Books fetch failed:', error instanceof Error ? error.message : 'Unknown error');
-        return [];
-      }),
-      
-      // iTunes audiobooks
-      this.fetchiTunesAudiobooks(20).then((audiobooks: iTunesAudiobook[]) => {
-        const transformed = audiobooks.map(transformiTunesAudiobook);
-        console.log(`Fetched ${transformed.length} audiobooks from iTunes`);
-        return transformed;
-      }).catch((error: any) => {
-        console.warn('iTunes fetch failed:', error instanceof Error ? error.message : 'Unknown error');
-        return [];
-      }),
-      
-      // External API books
-      this.fetchExternalAPIBooks().catch(error => {
-        console.warn('External API fetch failed:', error instanceof Error ? error.message : 'Unknown error');
-        return [];
-      })
     ];
-    
+    if (GOOGLE_BOOKS_API_KEY) {
+      fetchPromises.push(
+        this.fetchGoogleBooks(25).then(volumes => {
+          const transformed = volumes.map(transformGoogleBooksVolume);
+          console.log(`Fetched ${transformed.length} books from Google Books`);
+          return transformed;
+        }).catch(error => {
+          console.warn('Google Books fetch failed:', error instanceof Error ? error.message : 'Unknown error');
+          return [];
+        })
+      );
+    }
+    fetchPromises.push(
+      this.fetchAmazonBooks(20).then(books => {
+        if (books.length > 0) console.log(`Fetched ${books.length} books from Amazon`);
+        return books;
+      }).catch(() => [])
+    );
+
     // Wait for all API calls to complete
     const results = await Promise.all(fetchPromises);
     
@@ -789,6 +846,28 @@ export class ExternalAPIStorage implements IStorage {
       }
     }
     
+    // Check if this is a Project Gutenberg book
+    if (id.startsWith('gutenberg-')) {
+      try {
+        console.log(`Fetching Project Gutenberg book: ${id}`);
+        const gutenbergBook = await this.getGutenbergBook(id);
+        if (gutenbergBook) return transformGutendexBook(gutenbergBook);
+      } catch (error) {
+        console.warn(`Failed to fetch Gutenberg book ${id}:`, error);
+      }
+    }
+
+    // Check if this is an Amazon book
+    if (id.startsWith('amazon-')) {
+      try {
+        const asin = id.replace('amazon-', '');
+        const item = await getAmazonItem(asin);
+        if (item) return transformAmazonBook(item);
+      } catch (error) {
+        console.warn(`Failed to fetch Amazon book ${id}:`, error);
+      }
+    }
+
     // Check if this is an iTunes audiobook
     if (id.startsWith('itunes-')) {
       try {
@@ -863,45 +942,17 @@ export class ExternalAPIStorage implements IStorage {
 
   async searchBooks(query: string): Promise<Book[]> {
     const allBooks: Book[] = [];
-    const searchPromises: Promise<Book[]>[] = [];
-    
-    // Parallel search across all sources
-    searchPromises.push(
-      // LibriVox search
-      this.searchLibriVoxBooks(query, 15).then(books => books.map(transformLibriVoxBook)).catch(error => {
-        console.warn('LibriVox search failed:', error);
-        return [];
-      }),
-      
-      // Open Library search
-      this.searchOpenLibraryBooks(query, 10).then(books => books.map(transformOpenLibraryBook)).catch(error => {
-        console.warn('Open Library search failed:', error);
-        return [];
-      }),
-      
-      // Google Books search
-      this.searchGoogleBooks(query, 10).then(volumes => volumes.map(transformGoogleBooksVolume)).catch(error => {
-        console.warn('Google Books search failed:', error);
-        return [];
-      }),
-      
-      // iTunes search
-      this.searchiTunesAudiobooks(query, 10).then(audiobooks => audiobooks.map(transformiTunesAudiobook)).catch(error => {
-        console.warn('iTunes search failed:', error);
-        return [];
-      }),
-      
-      // External API search
-      this.searchExternalAPI(query).catch(error => {
-        console.warn('External API search failed:', error);
-        return [];
-      })
-    );
-    
-    // Wait for all searches to complete
+    const searchPromises: Promise<Book[]>[] = [
+      this.searchLibriVoxBooks(query, 20).then(books => books.map(transformLibriVoxBook)).catch(() => []),
+      this.searchGutenbergBooks(query, 20).then(books => books.map(transformGutendexBook)).catch(() => []),
+    ];
+    if (GOOGLE_BOOKS_API_KEY) {
+      searchPromises.push(
+        this.searchGoogleBooks(query, 15).then(volumes => volumes.map(transformGoogleBooksVolume)).catch(() => [])
+      );
+    }
+    searchPromises.push(this.searchAmazonBooks(query, 10).catch(() => []));
     const searchResults = await Promise.all(searchPromises);
-    
-    // Flatten and combine results
     searchResults.forEach(results => allBooks.push(...results));
     
     // Add fallback search if we don't have many results
@@ -1625,6 +1676,80 @@ export class ExternalAPIStorage implements IStorage {
       console.warn(`Failed to fetch LibriVox book ${id}:`, error);
       return null;
     }
+  }
+
+  private async fetchGutenbergBooks(limit = 40): Promise<GutendexBook[]> {
+    try {
+      console.log(`Fetching Project Gutenberg books (limit: ${limit})...`);
+      const url = `${GUTENDEX_API_BASE}/?page=1`;
+      const response = await fetchWithTimeout(url, 10000);
+      if (!response.ok) return [];
+      const data = await response.json();
+      const results = data.results ?? [];
+      const slice = results.slice(0, limit) as GutendexBook[];
+      console.log(`Fetched ${slice.length} books from Project Gutenberg`);
+      return slice;
+    } catch (error) {
+      console.warn('Failed to fetch from Project Gutenberg:', error instanceof Error ? error.message : 'Unknown error');
+      return [];
+    }
+  }
+
+  private async getGutenbergBook(id: string): Promise<GutendexBook | null> {
+    try {
+      const gid = id.startsWith('gutenberg-') ? id.replace('gutenberg-', '') : id;
+      console.log(`Fetching Project Gutenberg book: ${gid}`);
+      const url = `${GUTENDEX_API_BASE}/${gid}`;
+      const response = await fetchWithTimeout(url, 8000);
+      if (!response.ok) return null;
+      const book = await response.json() as GutendexBook;
+      return book;
+    } catch (error) {
+      console.warn(`Failed to fetch Gutenberg book ${id}:`, error);
+      return null;
+    }
+  }
+
+  private async searchGutenbergBooks(query: string, limit = 15): Promise<GutendexBook[]> {
+    try {
+      console.log(`Searching Project Gutenberg for: "${query}"`);
+      const url = `${GUTENDEX_API_BASE}/?search=${encodeURIComponent(query)}`;
+      const response = await fetchWithTimeout(url, 8000);
+      if (!response.ok) return [];
+      const data = await response.json();
+      const results = (data.results ?? []).slice(0, limit) as GutendexBook[];
+      console.log(`Gutenberg search returned: ${results.length} books`);
+      return results;
+    } catch (error) {
+      console.warn('Failed to search Project Gutenberg:', error);
+      return [];
+    }
+  }
+
+  /** Amazon Books via PA-API 5.0 (optional; requires env credentials). */
+  private async fetchAmazonBooks(limit = 20): Promise<Book[]> {
+    try {
+      const [a, b] = await Promise.all([
+        amazonPaApiSearch("bestseller books", 10),
+        amazonPaApiSearch("audiobooks", 10),
+      ]);
+      const seen = new Set<string>();
+      const merged: typeof a = [];
+      for (const item of [...a, ...b]) {
+        if (merged.length >= limit) break;
+        if (seen.has(item.asin)) continue;
+        seen.add(item.asin);
+        merged.push(item);
+      }
+      return merged.map(transformAmazonBook);
+    } catch {
+      return [];
+    }
+  }
+
+  private async searchAmazonBooks(query: string, limit = 10): Promise<Book[]> {
+    const items = await amazonPaApiSearch(query, Math.min(limit, 10));
+    return items.map(transformAmazonBook);
   }
 
   async updateUserSubscription(userId: string, subscription: {

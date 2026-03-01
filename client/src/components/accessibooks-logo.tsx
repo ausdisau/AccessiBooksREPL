@@ -1,9 +1,11 @@
 interface AccessiBooksLogoProps {
   className?: string;
   showText?: boolean;
+  /** When false, logo text is not an h1 (e.g. on landing so hero can be the only h1). Default true. */
+  asHeading?: boolean;
 }
 
-export function AccessiBooksLogo({ className = "", showText = true }: AccessiBooksLogoProps) {
+export function AccessiBooksLogo({ className = "", showText = true, asHeading = true }: AccessiBooksLogoProps) {
   return (
     <div className={`flex items-center ${className}`}>
       {/* Logo Icon */}
@@ -95,9 +97,15 @@ export function AccessiBooksLogo({ className = "", showText = true }: AccessiBoo
       {/* Text */}
       {showText && (
         <div className="flex flex-col">
-          <h1 className="font-display text-2xl font-bold text-primary leading-tight">
-            AccessiBooks
-          </h1>
+          {asHeading ? (
+            <h1 className="font-display text-2xl font-bold text-primary leading-tight">
+              AccessiBooks
+            </h1>
+          ) : (
+            <span className="font-display text-2xl font-bold text-primary leading-tight">
+              AccessiBooks
+            </span>
+          )}
           <p className="text-xs text-muted-foreground font-medium uppercase tracking-widest leading-none mt-1">
             Online Library
           </p>

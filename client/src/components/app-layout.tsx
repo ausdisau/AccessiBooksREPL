@@ -1,5 +1,5 @@
 import * as React from "react";
-import { BookOpen, Book as BookIcon, Play } from "lucide-react";
+import { Book as BookIcon, Play } from "lucide-react";
 import {
   SidebarProvider,
   Sidebar,
@@ -36,18 +36,6 @@ export function AppLayout({
               onClick={() => onNavigate("library")}
               aria-current={currentView === "library" ? "page" : undefined}
               className="rounded-xl"
-              data-testid="nav-home"
-            >
-              <BookOpen className="h-5 w-5" aria-hidden="true" />
-              <span>Home</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              isActive={currentView === "library"}
-              onClick={() => onNavigate("library")}
-              aria-current={currentView === "library" ? "page" : undefined}
-              className="rounded-xl"
               data-testid="tab-library"
             >
               <BookIcon className="h-5 w-5" aria-hidden="true" />
@@ -60,7 +48,6 @@ export function AppLayout({
               onClick={() => hasCurrentBook && onNavigate("player")}
               disabled={!hasCurrentBook}
               aria-current={currentView === "player" ? "page" : undefined}
-              aria-disabled={!hasCurrentBook}
               className="rounded-xl"
               data-testid="tab-player"
             >

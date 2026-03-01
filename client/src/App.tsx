@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { QueryClientProvider, useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
@@ -15,10 +15,12 @@ import { BookSection } from "@/components/book-section";
 import { BookCard } from "@/components/book-card";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { useAccessibility } from "@/hooks/use-accessibility";
+import { MotionConfig } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Book as BookIcon, Play, LogOut, User, Loader2, Mail, Lock, Eye, EyeOff, Crown, Settings, HardDrive } from "lucide-react";
+import { Book as BookIcon, Play, LogOut, User, Loader2, Mail, Lock, Eye, EyeOff, Crown, Settings, HardDrive, Keyboard } from "lucide-react";
+import { Loader } from "@/components/loader";
 import { SiFacebook } from "react-icons/si";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -28,7 +30,7 @@ import { AudioProvider, useAudioContext } from "@/contexts/AudioContext";
 import { MiniPlayer } from "@/components/mini-player";
 import { PremiumBadge } from "@/components/premium-badge";
 import { SubscriptionCard } from "@/components/subscription-card";
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { AdminStoragePage } from "@/pages/admin-storage";
 import { AppLayout } from "@/components/app-layout";
 
@@ -50,7 +52,57 @@ function AppHeader() {
 
           <div className="flex items-center space-x-4">
             <AccessibilityControls />
-            
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label="Keyboard shortcuts"
+                  data-testid="button-keyboard-shortcuts"
+                  title="Keyboard shortcuts"
+                >
+                  <Keyboard className="h-4 w-4" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-sm">
+                <DialogHeader>
+                  <DialogTitle>Keyboard shortcuts</DialogTitle>
+                  <DialogDescription asChild>
+                    <p id="keyboard-shortcuts-desc">Global shortcuts when not typing in a field.</p>
+                  </DialogDescription>
+                </DialogHeader>
+                <dl className="mt-2 space-y-2 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">Play / Pause</dt>
+                    <dd className="font-medium">Space</dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">Skip back 15 s</dt>
+                    <dd className="font-medium">Left arrow</dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">Skip forward 15 s</dt>
+                    <dd className="font-medium">Right arrow</dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">Slower speed</dt>
+                    <dd className="font-medium">[</dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">Faster speed</dt>
+                    <dd className="font-medium">]</dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">Bookmark</dt>
+                    <dd className="font-medium">B</dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">Toggle high contrast</dt>
+                    <dd className="font-medium">G</dd>
+                  </div>
+                </dl>
+              </DialogContent>
+            </Dialog>
             {user && (
               <div className="flex items-center space-x-2 pl-4 border-l border-border">
                 <PremiumBadge showUpgrade />
@@ -122,7 +174,7 @@ interface AuthProviders {
 
 // Landing page for logged-out users - public catalog browsing
 function LandingPage() {
-  const { toggleHighContrast } = useAccessibility();
+  const { settings, toggleHighContrast } = useAccessibility();
   const { toast } = useToast();
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
   const [showLoginDialog, setShowLoginDialog] = useState(false);
@@ -296,7 +348,7 @@ function LandingPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
         <header className="flex justify-between items-center mb-10">
-          <AccessiBooksLogo />
+          <AccessiBooksLogo asHeading={false} />
           <div className="flex items-center gap-3">
             <AccessibilityControls />
             <Button
@@ -313,6 +365,7 @@ function LandingPage() {
         <HeroSection 
           onBrowseCatalog={handleBrowseCatalog}
           onExploreSubjects={handleExploreSubjects}
+          reduceMotion={settings.reducedMotion}
         />
 
         {/* Subject Chips */}
@@ -327,9 +380,8 @@ function LandingPage() {
         {/* Book Sections */}
         <div id="book-sections" className="space-y-12">
           {isLoading ? (
-            <div className="text-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-4" />
-              <p className="text-muted-foreground">Loading books...</p>
+            <div className="py-12 flex justify-center">
+              <Loader variant="inline" message="Loading books…" />
             </div>
           ) : (
             <>
@@ -350,12 +402,13 @@ function LandingPage() {
                     </Button>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-                    {getSeeAllBooks("trending").map((book) => (
+                    {getSeeAllBooks("trending").map((book, i) => (
                       <BookCard
                         key={book.id}
                         book={book}
                         onPlayBook={handleBookSelect}
                         compact
+                        index={i}
                       />
                     ))}
                   </div>
@@ -379,12 +432,13 @@ function LandingPage() {
                     </Button>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-                    {getSeeAllBooks("new-arrivals").map((book) => (
+                    {getSeeAllBooks("new-arrivals").map((book, i) => (
                       <BookCard
                         key={book.id}
                         book={book}
                         onPlayBook={handleBookSelect}
                         compact
+                        index={i}
                       />
                     ))}
                   </div>
@@ -408,12 +462,13 @@ function LandingPage() {
                     </Button>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-                    {getSeeAllBooks("disability-voices").map((book) => (
+                    {getSeeAllBooks("disability-voices").map((book, i) => (
                       <BookCard
                         key={book.id}
                         book={book}
                         onPlayBook={handleBookSelect}
                         compact
+                        index={i}
                       />
                     ))}
                   </div>
@@ -603,8 +658,18 @@ function LandingPage() {
 function MainApp() {
   const [currentView, setCurrentView] = useState<View>("library");
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
+  const libraryFocusRef = useRef<HTMLDivElement>(null);
+  const playerFocusRef = useRef<HTMLDivElement>(null);
   const { toggleHighContrast } = useAccessibility();
   const { currentBook, playBook, togglePlayPause, skip, changeSpeed } = useAudioContext();
+
+  useEffect(() => {
+    if (currentView === "library") {
+      libraryFocusRef.current?.focus();
+    } else {
+      playerFocusRef.current?.focus();
+    }
+  }, [currentView]);
 
   const handleSelectBook = (book: Book) => {
     setSelectedBook(book);
@@ -662,6 +727,9 @@ function MainApp() {
               aria-labelledby="library-tab"
               data-testid="panel-library"
             >
+              <div ref={libraryFocusRef} tabIndex={-1} className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md">
+                <span>Library</span>
+              </div>
               <Library onSelectBook={handleSelectBook} />
             </div>
           ) : (
@@ -671,6 +739,9 @@ function MainApp() {
               aria-labelledby="player-tab"
               data-testid="panel-player"
             >
+              <div ref={playerFocusRef} tabIndex={-1} className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:px-4 focus:py-2 focus:bg-primary focus:text-primary-foreground focus:rounded-md">
+                <span>Player</span>
+              </div>
               <Player book={selectedBook || currentBook} onBackToLibrary={handleBackToLibrary} />
             </div>
           )}
@@ -684,35 +755,34 @@ function MainApp() {
 
 function App() {
   const { isAuthenticated, isLoading } = useAuth();
+  const { settings } = useAccessibility();
   const pathname = typeof window !== "undefined" ? window.location.pathname : "";
+  const reduceMotion = settings.reducedMotion ? "always" : "user";
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-center">
-          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading AccessiBooks...</p>
-        </div>
-      </div>
-    );
+    return <Loader variant="page" message="Loading AccessiBooks…" />;
   }
 
   if (isAuthenticated && (pathname === "/admin" || pathname === "/admin/storage")) {
     return (
-      <TooltipProvider>
-        <AdminStoragePage />
-        <Toaster />
-      </TooltipProvider>
+      <MotionConfig reducedMotion={reduceMotion}>
+        <TooltipProvider>
+          <AdminStoragePage />
+          <Toaster />
+        </TooltipProvider>
+      </MotionConfig>
     );
   }
 
   return (
-    <TooltipProvider>
-      <AudioProvider>
-        {isAuthenticated ? <MainApp /> : <LandingPage />}
-        <Toaster />
-      </AudioProvider>
-    </TooltipProvider>
+    <MotionConfig reducedMotion={reduceMotion}>
+      <TooltipProvider>
+        <AudioProvider>
+          {isAuthenticated ? <MainApp /> : <LandingPage />}
+          <Toaster />
+        </AudioProvider>
+      </TooltipProvider>
+    </MotionConfig>
   );
 }
 

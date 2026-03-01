@@ -36,6 +36,8 @@ export function AdBanner({ variant = "library", onClose }: AdBannerProps) {
             disabled={isUpgrading}
             className="bg-amber-600 hover:bg-amber-700 text-white"
             size="sm"
+            aria-busy={isUpgrading}
+            aria-label="Upgrade to Premium"
           >
             {isUpgrading ? "Loading..." : "$9.99/mo"}
           </Button>
@@ -80,6 +82,8 @@ export function AdBanner({ variant = "library", onClose }: AdBannerProps) {
           disabled={isUpgrading}
           className="whitespace-nowrap"
           size="lg"
+          aria-busy={isUpgrading}
+          aria-label="Upgrade to Premium"
         >
           {isUpgrading ? "Loading..." : "Upgrade for $9.99/mo"}
         </Button>

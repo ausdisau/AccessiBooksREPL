@@ -1,7 +1,16 @@
 import { Book } from "@shared/schema";
 import { BookCard } from "@/components/book-card";
 import { Button } from "@/components/ui/button";
+import { motion } from "framer-motion";
 import { ArrowRight } from "lucide-react";
+
+const container = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.05, delayChildren: 0.02 },
+  },
+};
 
 interface BookSectionProps {
   title: string;
@@ -34,16 +43,22 @@ export function BookSection({ title, books, onSelectBook, onSeeAll, maxItems = 5
           </Button>
         )}
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-        {displayedBooks.map((book) => (
+      <motion.div
+        className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6"
+        variants={container}
+        initial="hidden"
+        animate="visible"
+      >
+        {displayedBooks.map((book, i) => (
           <BookCard
             key={book.id}
             book={book}
             onPlayBook={onSelectBook}
             compact
+            index={i}
           />
         ))}
-      </div>
+      </motion.div>
     </section>
   );
 }

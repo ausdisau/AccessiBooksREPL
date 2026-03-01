@@ -207,6 +207,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.setHeader("Access-Control-Allow-Origin", "*");
         return res.redirect(302, signedUrl);
       }
+      // Project Gutenberg / Google Books / Amazon: redirect to read or product page (no audio)
+      if (book.source === "gutenberg" || book.source === "google-books" || book.source === "amazon") {
+        res.setHeader("Cache-Control", "public, max-age=3600");
+        return res.redirect(302, book.audioUrl);
+      }
       // Security: Validate audio URL against allowed domains to prevent SSRF
       if (!storage.validateAudioUrl(book.audioUrl)) {
         console.warn(`Blocked potentially unsafe audio URL for book ${id}: ${book.audioUrl}`);
