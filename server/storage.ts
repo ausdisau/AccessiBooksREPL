@@ -1,9 +1,9 @@
-import { type Book, type InsertBook, type User, type InsertUser, type UpsertUser, users, listeningHistory, type ListeningHistory, type InsertListeningHistory } from "@shared/schema";
+import { type Book, type InsertBook, type User, type InsertUser, type UpsertUser, users, books, listeningHistory, userPreferences, type ListeningHistory, type InsertListeningHistory, type UserPreferences } from "@shared/schema";
 import { randomUUID } from "crypto";
 import session from "express-session";
 import createMemoryStore from "memorystore";
 import { db } from "./db";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, inArray } from "drizzle-orm";
 
 const MemoryStore = createMemoryStore(session);
 
@@ -22,7 +22,7 @@ export interface IStorage {
   createBook(book: InsertBook): Promise<Book>;
   searchBooks(query: string): Promise<Book[]>;
   
-  // User management (Replit Auth)
+  // User management
   getUser(id: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
   
@@ -57,6 +57,14 @@ export interface IStorage {
   
   // Security
   validateAudioUrl(url: string): boolean;
+
+  // Uploaded books (S3/GCS)
+  insertUploadedBook(insertBook: InsertBook): Promise<Book>;
+  deleteUploadedBook(id: string): Promise<boolean>;
+
+  // User preferences (hyper-contextual)
+  getUserPreferences(userId: string): Promise<{ defaultSpeed: number; preferredSections: string[] } | null>;
+  updateUserPreferences(userId: string, prefs: { defaultSpeed?: number; preferredSections?: string[] }): Promise<{ defaultSpeed: number; preferredSections: string[] }>;
   
   sessionStore: session.Store;
 }
@@ -507,17 +515,17 @@ export class ExternalAPIStorage implements IStorage {
   private cache: Map<string, CacheEntry<any>> = new Map();
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
   
-  // Security: Allowed domains for audio streaming and covers
+  // Security: Allowed domains for audio streaming and covers (path-only = same-origin)
   private readonly ALLOWED_AUDIO_DOMAINS = [
     'librivox.org',
-    'archive.org', // Internet Archive base domain
-    'www.archive.org', // Internet Archive www
-    'library-management-api-i6if.onrender.com', // External API
-    'covers.openlibrary.org', // Open Library covers
-    'books.google.com', // Google Books covers
-    'books.googleusercontent.com', // Google Books CDN
-    'audio-ssl.itunes.apple.com', // iTunes preview audio
-    'mzstatic.com' // iTunes/Apple CDN (includes is*-ssl.mzstatic.com subdomains)
+    'archive.org',
+    'www.archive.org',
+    'library-management-api-i6if.onrender.com',
+    'covers.openlibrary.org',
+    'books.google.com',
+    'books.googleusercontent.com',
+    'audio-ssl.itunes.apple.com',
+    'mzstatic.com'
   ];
 
   constructor() {
@@ -694,7 +702,11 @@ export class ExternalAPIStorage implements IStorage {
     const results = await Promise.all(fetchPromises);
     
     // Combine all results
-    results.forEach((books: Book[]) => allBooks.push(...books));
+    results.forEach((apiBooks: Book[]) => allBooks.push(...apiBooks));
+
+    // Include S3/GCS uploaded books from DB
+    const dbBooks = await this.getBooksFromDB();
+    allBooks.push(...dbBooks);
     
     // Add fallback books if we don't have many results
     if (allBooks.length < 10) {
@@ -790,6 +802,10 @@ export class ExternalAPIStorage implements IStorage {
         console.warn(`Failed to fetch iTunes audiobook ${id}:`, error);
       }
     }
+
+    // DB-backed uploaded books (S3/GCS)
+    const dbBook = await this.getBookFromDB(id);
+    if (dbBook) return dbBook;
     
     // Try external API
     try {
@@ -963,22 +979,76 @@ export class ExternalAPIStorage implements IStorage {
   // Security: Validate audio URL against allowed domains (public method for routes)
   validateAudioUrl(url: string): boolean {
     try {
+      // Same-origin path (e.g. /api/stream/:id for S3/GCS books)
+      if (url.startsWith("/")) return true;
+
       const parsedUrl = new URL(url);
-      
-      // Check against explicit allowed domains
-      const isAllowed = this.ALLOWED_AUDIO_DOMAINS.some(domain => 
+      const isAllowed = this.ALLOWED_AUDIO_DOMAINS.some(domain =>
         parsedUrl.hostname === domain || parsedUrl.hostname.endsWith('.' + domain)
       );
-      
       if (isAllowed) return true;
-      
-      // Allow all Internet Archive CDN subdomains (ia###.us.archive.org pattern)
+
       const archiveCDNPattern = /^ia\d+\.us\.archive\.org$/;
-      if (archiveCDNPattern.test(parsedUrl.hostname)) {
-        return true;
-      }
-      
+      if (archiveCDNPattern.test(parsedUrl.hostname)) return true;
+
       return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Books from DB with source s3 or gcs (uploaded). */
+  private async getBooksFromDB(): Promise<Book[]> {
+    try {
+      const rows = await db.select().from(books).where(inArray(books.source, ["s3", "gcs"]));
+      return rows.map((row) => this.dbRowToBook(row));
+    } catch {
+      return [];
+    }
+  }
+
+  private dbRowToBook(row: typeof books.$inferSelect): Book {
+    const streamPath = `/api/stream/${row.id}`;
+    return {
+      id: row.id,
+      title: row.title,
+      author: row.author,
+      narrator: row.narrator ?? null,
+      description: row.description ?? null,
+      duration: row.duration,
+      coverImage: row.coverImage ?? null,
+      audioUrl: streamPath,
+      genre: row.genre ?? null,
+      publishedYear: row.publishedYear ?? null,
+      source: row.source,
+      sourceId: row.sourceId ?? null,
+      totalTime: row.totalTime ?? null,
+      language: row.language ?? "English",
+    };
+  }
+
+  /** Get book from DB by id (for S3/GCS or any DB-backed book). */
+  async getBookFromDB(id: string): Promise<Book | undefined> {
+    try {
+      const [row] = await db.select().from(books).where(eq(books.id, id));
+      if (!row) return undefined;
+      return this.dbRowToBook(row);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Insert uploaded book (S3/GCS) into DB. Returns the created Book. */
+  async insertUploadedBook(insertBook: InsertBook): Promise<Book> {
+    const [row] = await db.insert(books).values(insertBook).returning();
+    return this.dbRowToBook(row);
+  }
+
+  /** Delete uploaded book from DB by id. */
+  async deleteUploadedBook(id: string): Promise<boolean> {
+    try {
+      const result = await db.delete(books).where(eq(books.id, id)).returning({ id: books.id });
+      return result.length > 0;
     } catch {
       return false;
     }
@@ -1035,7 +1105,7 @@ export class ExternalAPIStorage implements IStorage {
   async getUserByUsername(username: string): Promise<User | undefined> {
     // This method is deprecated - use getUserByEmail instead
     // For OAuth-based auth, we don't have usernames
-    console.log(`getUserByUsername is deprecated, using email lookup instead`);
+    // Removed console.log for production - use proper logging in production
     return this.getUserByEmail(username);
   }
 
@@ -1699,6 +1769,33 @@ export class ExternalAPIStorage implements IStorage {
       console.error(`Error getting continue listening for user ${userId}:`, error);
       return [];
     }
+  }
+
+  async getUserPreferences(userId: string): Promise<{ defaultSpeed: number; preferredSections: string[] } | null> {
+    try {
+      const [row] = await db.select().from(userPreferences).where(eq(userPreferences.userId, userId));
+      if (!row) return null;
+      return {
+        defaultSpeed: row.defaultSpeed ?? 1,
+        preferredSections: Array.isArray(row.preferredSections) ? row.preferredSections : [],
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async updateUserPreferences(userId: string, prefs: { defaultSpeed?: number; preferredSections?: string[] }): Promise<{ defaultSpeed: number; preferredSections: string[] }> {
+    const existing = await this.getUserPreferences(userId);
+    const defaultSpeed = prefs.defaultSpeed ?? existing?.defaultSpeed ?? 1;
+    const preferredSections = prefs.preferredSections ?? existing?.preferredSections ?? [];
+    await db
+      .insert(userPreferences)
+      .values({ userId, defaultSpeed, preferredSections })
+      .onConflictDoUpdate({
+        target: userPreferences.userId,
+        set: { defaultSpeed, preferredSections, updatedAt: new Date() },
+      });
+    return { defaultSpeed, preferredSections };
   }
 
   async getBookChapters(bookId: string): Promise<Chapter[]> {

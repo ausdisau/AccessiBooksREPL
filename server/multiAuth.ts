@@ -3,6 +3,8 @@ import { Strategy as LocalStrategy } from "passport-local";
 import { Strategy as FacebookStrategy } from "passport-facebook";
 import { Strategy as MicrosoftStrategy } from "passport-microsoft";
 import { Strategy as Auth0Strategy } from "passport-auth0";
+import { Strategy as GoogleStrategy } from "passport-google-oauth20";
+import { Strategy as GitHubStrategy } from "passport-github2";
 import bcrypt from "bcryptjs";
 import type { Express, Request, Response, NextFunction } from "express";
 import { storage } from "./storage";
@@ -135,8 +137,69 @@ if (process.env.AUTH0_DOMAIN && process.env.AUTH0_CLIENT_ID && process.env.AUTH0
   );
 }
 
+// Google OAuth Strategy
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  passport.use(
+    new GoogleStrategy(
+      {
+        clientID: process.env.GOOGLE_CLIENT_ID,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        callbackURL: "/api/auth/google/callback",
+      },
+      async (accessToken: string, refreshToken: string, profile: any, done: any) => {
+        try {
+          const email = profile.emails?.[0]?.value;
+          const user = await storage.upsertUser({
+            id: `google-${profile.id}`,
+            email: email || null,
+            firstName: profile.name?.givenName || null,
+            lastName: profile.name?.familyName || null,
+            profileImageUrl: profile.photos?.[0]?.value || null,
+            authProvider: "google",
+            providerId: profile.id,
+          });
+          return done(null, user);
+        } catch (error) {
+          return done(error as Error);
+        }
+      }
+    )
+  );
+}
+
+// GitHub OAuth Strategy
+if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
+  passport.use(
+    new GitHubStrategy(
+      {
+        clientID: process.env.GITHUB_CLIENT_ID,
+        clientSecret: process.env.GITHUB_CLIENT_SECRET,
+        callbackURL: "/api/auth/github/callback",
+        scope: ["user:email"],
+      },
+      async (accessToken: string, refreshToken: string, profile: any, done: any) => {
+        try {
+          const email = profile.emails?.[0]?.value || profile._json?.email;
+          const user = await storage.upsertUser({
+            id: `github-${profile.id}`,
+            email: email || null,
+            firstName: profile.displayName?.split(" ")[0] || profile.username || null,
+            lastName: profile.displayName?.split(" ").slice(1).join(" ") || null,
+            profileImageUrl: profile.photos?.[0]?.value || profile._json?.avatar_url || null,
+            authProvider: "github",
+            providerId: profile.id,
+          });
+          return done(null, user);
+        } catch (error) {
+          return done(error as Error);
+        }
+      }
+    )
+  );
+}
+
 export function setupMultiAuth(app: Express) {
-  // Note: passport.initialize() and passport.session() are already set up in replitAuth.ts
+  // Note: passport.initialize() and passport.session() should be set up before calling this function
   
   // Local registration
   app.post("/api/auth/register", async (req: Request, res: Response) => {
@@ -235,6 +298,29 @@ export function setupMultiAuth(app: Express) {
     );
   }
 
+  // Google OAuth
+  if (process.env.GOOGLE_CLIENT_ID) {
+    app.get(
+      "/api/auth/google",
+      passport.authenticate("google", { scope: ["profile", "email"] })
+    );
+    app.get(
+      "/api/auth/google/callback",
+      passport.authenticate("google", { failureRedirect: "/?auth=failed" }),
+      (req, res) => res.redirect("/")
+    );
+  }
+
+  // GitHub OAuth
+  if (process.env.GITHUB_CLIENT_ID) {
+    app.get("/api/auth/github", passport.authenticate("github", { scope: ["user:email"] }));
+    app.get(
+      "/api/auth/github/callback",
+      passport.authenticate("github", { failureRedirect: "/?auth=failed" }),
+      (req, res) => res.redirect("/")
+    );
+  }
+
   // Get available auth providers
   app.get("/api/auth/providers", (req, res) => {
     res.json({
@@ -242,9 +328,8 @@ export function setupMultiAuth(app: Express) {
       facebook: !!process.env.FACEBOOK_APP_ID,
       microsoft: !!process.env.MICROSOFT_CLIENT_ID,
       auth0: !!process.env.AUTH0_DOMAIN,
-      google: true, // Via Replit Auth
-      github: true, // Via Replit Auth
-      apple: true, // Via Replit Auth
+      google: !!process.env.GOOGLE_CLIENT_ID,
+      github: !!process.env.GITHUB_CLIENT_ID,
     });
   });
 

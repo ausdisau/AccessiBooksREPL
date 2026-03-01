@@ -30,7 +30,7 @@ export function ContinueListening({ onSelectBook, books }: ContinueListeningProp
   if (isLoading) {
     return (
       <section className="mb-8" aria-label="Continue Listening">
-        <h2 className="text-xl font-semibold mb-4">Continue Listening</h2>
+        <h2 className="font-display text-xl font-semibold mb-4">Continue Listening</h2>
         <div className="flex gap-4 overflow-hidden">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="flex-shrink-0 w-64 h-32 bg-muted rounded-lg animate-pulse" />
@@ -53,7 +53,7 @@ export function ContinueListening({ onSelectBook, books }: ContinueListeningProp
 
   return (
     <section className="mb-8" aria-label="Continue Listening">
-      <h2 className="text-xl font-semibold mb-4">Continue Listening</h2>
+      <h2 className="font-display text-xl font-semibold mb-4">Continue Listening</h2>
       <ScrollArea className="w-full whitespace-nowrap">
         <div className="flex gap-4 pb-4">
           {continueItems.map((item) => {
@@ -63,9 +63,9 @@ export function ContinueListening({ onSelectBook, books }: ContinueListeningProp
               : "";
             
             return (
-              <Card 
-                key={item.id} 
-                className="flex-shrink-0 w-72 cursor-pointer hover:bg-accent/50 transition-colors group"
+              <Card
+                key={item.id}
+                className="flex-shrink-0 w-72 cursor-pointer rounded-xl border border-border hover:border-primary/30 hover:shadow-md transition-all group"
                 onClick={() => handlePlay(item)}
               >
                 <CardContent className="p-4">

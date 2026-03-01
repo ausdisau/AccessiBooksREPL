@@ -9,14 +9,15 @@ import { BookmarkList } from "./bookmark-list";
 import { SleepTimer } from "./sleep-timer";
 import { ChapterList } from "./chapter-list";
 import { useToast } from "@/hooks/use-toast";
+import { detectAudioFormat, canPlayFormat } from "@/lib/audioUtils";
 import { 
   Play, 
   Pause, 
   SkipBack, 
   SkipForward, 
   Minus, 
-  Plus,
-  Bookmark as BookmarkIcon,
+  Plus, 
+  Bookmark as BookmarkIcon, 
   Loader2
 } from "lucide-react";
 
@@ -75,10 +76,34 @@ export function AudioPlayer({ book }: AudioPlayerProps) {
 
   const progressPercentage = duration > 0 ? (currentTime / duration) * 100 : 0;
 
+  // Detect audio format and ensure browser support
+  const audioFormat = detectAudioFormat(book.audioUrl || '/api/stream/' + book.id);
+  const formatSupported = canPlayFormat(audioFormat.format);
+  const streamUrl = `/api/stream/${book.id}`;
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      {/* Hidden audio element */}
-      <audio ref={audioRef} preload="metadata" />
+      {/* High-fidelity audio element with proper format support */}
+      <audio 
+        ref={audioRef} 
+        preload="auto"
+        crossOrigin="anonymous"
+        playsInline
+      >
+        {/* Multiple source elements for format fallback and high-quality streaming */}
+        <source src={streamUrl} type={audioFormat.mimeType} />
+        {/* Fallback sources for maximum compatibility and quality */}
+        {audioFormat.format !== 'mp3' && (
+          <source src={streamUrl} type="audio/mpeg" />
+        )}
+        {audioFormat.format !== 'wav' && (
+          <source src={streamUrl} type="audio/wav" />
+        )}
+        {audioFormat.format !== 'ogg' && (
+          <source src={streamUrl} type="audio/ogg" />
+        )}
+        Your browser does not support the audio element.
+      </audio>
 
       {/* Book info header */}
       <Card>
@@ -131,7 +156,7 @@ export function AudioPlayer({ book }: AudioPlayerProps) {
             
             <Slider
               value={[progressPercentage]}
-              onValueChange={([value]) => {
+              onValueChange={([value]: number[]) => {
                 const newTime = (value / 100) * duration;
                 seekTo(newTime);
               }}
@@ -223,8 +248,8 @@ export function AudioPlayer({ book }: AudioPlayerProps) {
                 <input
                   type="text"
                   value={bookmarkName}
-                  onChange={(e) => setBookmarkName(e.target.value)}
-                  onKeyDown={(e) => {
+                  onChange={(e: { target: { value: string } }) => setBookmarkName(e.target.value)}
+                  onKeyDown={(e: { key: string }) => {
                     if (e.key === "Enter") {
                       handleAddBookmark();
                     } else if (e.key === "Escape") {

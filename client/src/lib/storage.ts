@@ -8,6 +8,7 @@ export interface AccessibilitySettings {
   highContrast: boolean;
   dyslexiaFont: boolean;
   darkMode: boolean;
+  reducedMotion: boolean;
 }
 
 export const localStorageService = {
@@ -85,12 +86,17 @@ export const localStorageService = {
     try {
       const stored = localStorage.getItem(SETTINGS_KEY);
       if (!stored) {
-        return { highContrast: false, dyslexiaFont: false, darkMode: false };
+        return { highContrast: false, dyslexiaFont: false, darkMode: false, reducedMotion: false };
       }
-      
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored);
+      return {
+        highContrast: parsed.highContrast === true,
+        dyslexiaFont: parsed.dyslexiaFont === true,
+        darkMode: parsed.darkMode === true,
+        reducedMotion: parsed.reducedMotion === true,
+      };
     } catch {
-      return { highContrast: false, dyslexiaFont: false, darkMode: false };
+      return { highContrast: false, dyslexiaFont: false, darkMode: false, reducedMotion: false };
     }
   },
 

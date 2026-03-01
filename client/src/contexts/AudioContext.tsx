@@ -3,6 +3,7 @@ import { Book, Progress } from "@shared/schema";
 import { localStorageService } from "@/lib/storage";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
+import { useUserPreferences } from "@/hooks/use-user-preferences";
 
 interface AudioContextType {
   currentBook: Book | null;
@@ -37,12 +38,13 @@ export function useAudioContext() {
 
 export function AudioProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  const { preferences } = useUserPreferences(!!user);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [currentBook, setCurrentBook] = useState<Book | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [playbackRate, setPlaybackRate] = useState(1.0);
+  const [playbackRate, setPlaybackRate] = useState(() => preferences.defaultSpeed);
   const [isLoading, setIsLoading] = useState(false);
   const [sleepTimer, setSleepTimerState] = useState<number | null>(null);
   const [sleepTimerRemaining, setSleepTimerRemaining] = useState<number | null>(null);
@@ -126,6 +128,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     if (audioRef.current && currentBook) {
       audioRef.current.src = `/api/stream/${currentBook.id}`;
       audioRef.current.load();
+      const speed = Math.max(0.5, Math.min(3, preferences.defaultSpeed));
+      setPlaybackRate(speed);
     }
   }, [currentBook?.id]);
 

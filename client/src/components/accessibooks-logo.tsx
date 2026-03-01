@@ -54,21 +54,16 @@ export function AccessiBooksLogo({ className = "", showText = true }: AccessiBoo
             width="76"
             height="51"
             rx="4"
-            fill="hsl(210, 40%, 96%)"
-            className="dark:fill-gray-700"
+            className="fill-secondary"
           />
           
-          {/* Book Pages (Left Page - Orange) */}
+          {/* Book Pages */}
           <path
             d="M 35 25 Q 35 23 37 23 L 58 23 Q 60 23 60 25 L 60 55 Q 60 57 58 57 L 37 57 Q 35 57 35 55 Z"
-            fill="hsl(18, 100%, 62%)"
             className="fill-accent"
           />
-          
-          {/* Book Pages (Right Page - Orange) */}
           <path
             d="M 60 25 Q 60 23 62 23 L 83 23 Q 85 23 85 25 L 85 55 Q 85 57 83 57 L 62 57 Q 60 57 60 55 Z"
-            fill="hsl(18, 100%, 62%)"
             className="fill-accent"
           />
           
@@ -100,10 +95,10 @@ export function AccessiBooksLogo({ className = "", showText = true }: AccessiBoo
       {/* Text */}
       {showText && (
         <div className="flex flex-col">
-          <h1 className="text-2xl font-bold text-primary leading-none">
+          <h1 className="font-display text-2xl font-bold text-primary leading-tight">
             AccessiBooks
           </h1>
-          <p className="text-sm text-primary font-medium uppercase tracking-wider leading-none mt-1">
+          <p className="text-xs text-muted-foreground font-medium uppercase tracking-widest leading-none mt-1">
             Online Library
           </p>
         </div>

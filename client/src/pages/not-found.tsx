@@ -14,8 +14,8 @@ export default function NotFound() {
           
           <div className="space-y-6">
             <div className="space-y-2">
-              <h1 className="text-8xl font-bold text-primary">404</h1>
-              <h2 className="text-2xl font-semibold text-foreground">Page Not Found</h2>
+              <h1 className="font-display text-8xl font-bold text-primary">404</h1>
+              <h2 className="font-display text-2xl font-semibold text-foreground">Page Not Found</h2>
             </div>
             
             <p className="text-lg text-muted-foreground max-w-md mx-auto">
@@ -23,14 +23,13 @@ export default function NotFound() {
             </p>
             
             <div className="flex flex-col sm:flex-row gap-4 justify-center pt-6">
-              <Button asChild className="min-w-[160px]" data-testid="button-go-home">
+              <Button asChild className="min-w-[160px] rounded-xl" data-testid="button-go-home">
                 <Link href="/">
                   <Home className="h-4 w-4 mr-2" />
                   Go Home
                 </Link>
               </Button>
-              
-              <Button variant="outline" asChild className="min-w-[160px]" data-testid="button-browse-library">
+              <Button variant="outline" asChild className="min-w-[160px] rounded-xl" data-testid="button-browse-library">
                 <Link href="/">
                   <BookOpen className="h-4 w-4 mr-2" />
                   Browse Library

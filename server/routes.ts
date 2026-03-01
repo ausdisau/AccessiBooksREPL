@@ -1,19 +1,48 @@
 import type { Express } from "express";
+import type { Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { setupAuth, isAuthenticated } from "./replitAuth";
+import { setupAuth } from "./sessionAuth";
 import { setupMultiAuth } from "./multiAuth";
 import { getUncachableSpotifyClient, isSpotifyConnected } from "./spotifyClient";
 import { stripe, PREMIUM_PRICE_MONTHLY, SUBSCRIPTION_CONFIG } from "./stripe";
+import { detectAudioFormat } from "./audioUtils";
+import { getPrimaryStorageAdapter, getS3Adapter } from "./storageAdapter";
+import multer from "multer";
+import { db } from "./db";
+import { books } from "@shared/schema";
+import { eq } from "drizzle-orm";
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
+
+function requireAdmin(req: Request, res: Response, next: () => void) {
+  if (!req.isAuthenticated() || !req.user) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+  const adminEmails = (process.env.ADMIN_EMAILS || "").trim().split(/\s*,\s*/).filter(Boolean);
+  if (adminEmails.length > 0) {
+    const email = (req.user as { email?: string }).email;
+    if (!email || !adminEmails.includes(email)) {
+      res.status(403).json({ message: "Forbidden" });
+      return;
+    }
+  }
+  next();
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Enable CORS for same-origin requests (more secure than wildcard)
   app.use((req, res, next) => {
     const origin = req.headers.origin;
     const allowedOrigins = [
-      'http://localhost:5000', // Dev server
+      'http://localhost:3000', // Dev server
+      'http://localhost:5000', // Node app direct
+      'http://localhost',     // IIS reverse proxy (port 80)
+      'https://localhost:3000',
       'https://localhost:5000',
+      'https://localhost',
       process.env.ALLOWED_ORIGIN // Production domain
     ].filter(Boolean);
     
@@ -33,34 +62,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Setup authentication routes: /api/login, /api/callback, /api/logout (Replit Auth)
+  // Session and Passport auth (login, callback, logout)
   await setupAuth(app);
   
   // Setup multi-provider authentication: local, Facebook, Microsoft, Auth0
   setupMultiAuth(app);
 
-  // Auth user endpoint - supports both Replit Auth and local auth
-  app.get('/api/auth/user', async (req: any, res) => {
+  // Auth user endpoint - supports local auth and OAuth providers
+  app.get('/api/auth/user', async (req: Request, res: Response) => {
     try {
       if (!req.isAuthenticated() || !req.user) {
         return res.status(401).json({ message: "Unauthorized" });
       }
       
-      // Check if this is a Replit Auth user (has claims.sub)
-      if (req.user.claims?.sub) {
-        const userId = req.user.claims.sub;
-        const user = await storage.getUser(userId);
-        
-        if (!user) {
-          console.error(`User ${userId} not found in database`);
-          return res.status(404).json({ message: "User not found" });
+      // User object stored in session (local auth or OAuth)
+      if (req.user.id) {
+        // Try to get user from database first (OAuth users might be in DB)
+        const dbUser = await storage.getUser(req.user.id);
+        if (dbUser) {
+          return res.json(dbUser);
         }
         
-        return res.json(user);
-      }
-      
-      // Local auth user - user object stored directly in session
-      if (req.user.id) {
+        // If not in DB, return session user (local auth)
         const { passwordHash, ...userWithoutPassword } = req.user;
         return res.json(userWithoutPassword);
       }
@@ -72,8 +95,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // GET /api/user/preferences - Get current user preferences (hyper-contextual)
+  app.get("/api/user/preferences", async (req: Request, res: Response) => {
+    try {
+      if (!req.isAuthenticated() || !req.user?.id) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const prefs = await storage.getUserPreferences(req.user.id);
+      return res.json(prefs ?? { defaultSpeed: 1, preferredSections: [] });
+    } catch (error) {
+      console.error("Error fetching preferences:", error);
+      res.status(500).json({ message: "Failed to fetch preferences" });
+    }
+  });
+
+  // PATCH /api/user/preferences - Update current user preferences
+  app.patch("/api/user/preferences", async (req: Request, res: Response) => {
+    try {
+      if (!req.isAuthenticated() || !req.user?.id) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+      const body = req.body as { defaultSpeed?: number; preferredSections?: string[] };
+      const updated = await storage.updateUserPreferences(req.user.id, {
+        ...(typeof body.defaultSpeed === "number" && { defaultSpeed: body.defaultSpeed }),
+        ...(Array.isArray(body.preferredSections) && { preferredSections: body.preferredSections }),
+      });
+      return res.json(updated);
+    } catch (error) {
+      console.error("Error updating preferences:", error);
+      res.status(500).json({ message: "Failed to update preferences" });
+    }
+  });
+
   // GET /api/books - Get all books
-  app.get("/api/books", async (req, res) => {
+  app.get("/api/books", async (req: Request, res: Response) => {
     try {
       const books = await storage.getBooks();
       res.json(books);
@@ -83,7 +138,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // GET /api/books/search - Search books
-  app.get("/api/books/search", async (req, res) => {
+  app.get("/api/books/search", async (req: Request, res: Response) => {
     try {
       const { q } = req.query;
       
@@ -99,7 +154,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // GET /api/books/:id - Get specific book
-  app.get("/api/books/:id", async (req, res) => {
+  app.get("/api/books/:id", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const book = await storage.getBook(id);
@@ -115,7 +170,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // GET /api/books/:id/chapters - Get chapters for a book (LibriVox only)
-  app.get("/api/books/:id/chapters", async (req, res) => {
+  app.get("/api/books/:id/chapters", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       
@@ -132,8 +187,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // GET /api/stream/:id - Stream audio (redirect to actual audio URL)
-  app.get("/api/stream/:id", async (req, res) => {
+  // GET /api/stream/:id - Stream audio with format support (MP3, WAV, OGG)
+  app.get("/api/stream/:id", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const book = await storage.getBook(id);
@@ -141,7 +196,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!book) {
         return res.status(404).json({ message: "Book not found" });
       }
-      
+      // S3/GCS: redirect to signed URL
+      if (book.source === "s3" || book.source === "gcs") {
+        const key = book.sourceId;
+        if (!key) return res.status(400).json({ message: "Invalid book source" });
+        const adapter = await getPrimaryStorageAdapter();
+        if (!adapter) return res.status(503).json({ message: "Storage not configured" });
+        const signedUrl = await adapter.getSignedUrl(key, 3600);
+        res.setHeader("Cache-Control", "public, max-age=3600");
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        return res.redirect(302, signedUrl);
+      }
       // Security: Validate audio URL against allowed domains to prevent SSRF
       if (!storage.validateAudioUrl(book.audioUrl)) {
         console.warn(`Blocked potentially unsafe audio URL for book ${id}: ${book.audioUrl}`);
@@ -151,7 +216,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // Redirect to the validated audio URL
+      // Detect audio format from URL
+      const formatInfo = detectAudioFormat(book.audioUrl);
+      
+      // Set appropriate headers for high-fidelity audio streaming
+      res.setHeader('Content-Type', formatInfo.mimeType);
+      res.setHeader('Accept-Ranges', 'bytes'); // Enable range requests for seeking
+      res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+      res.setHeader('Access-Control-Allow-Origin', '*'); // Allow CORS for audio streaming
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+      
+      // Enable compression for better streaming (if supported)
+      // Note: Audio files are usually already compressed, so this may not apply
+      
+      // Support range requests for seeking
+      const range = req.headers.range;
+      if (range) {
+        // For now, redirect with range header support
+        // The actual server handling the audio file will process the range request
+        res.setHeader('Location', book.audioUrl);
+        return res.status(307).end(); // Temporary redirect with method preservation
+      }
+      
+      // Redirect to the validated audio URL with format awareness
       res.redirect(302, book.audioUrl);
     } catch (error) {
       console.error('Streaming error:', error);
@@ -160,7 +248,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Spotify connection status
-  app.get("/api/spotify/status", async (req, res) => {
+  app.get("/api/spotify/status", async (req: Request, res: Response) => {
     try {
       const connected = await isSpotifyConnected();
       res.json({ connected });
@@ -170,7 +258,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Search Spotify audiobooks
-  app.get("/api/spotify/search", async (req, res) => {
+  app.get("/api/spotify/search", async (req: Request, res: Response) => {
     try {
       const { q } = req.query;
       if (!q || typeof q !== "string") {
@@ -180,7 +268,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const spotify = await getUncachableSpotifyClient();
       const results = await spotify.search(q, ["audiobook"], undefined, 20);
       
-      const audiobooks = results.audiobooks?.items.map(item => ({
+      const audiobooks = results.audiobooks?.items.map((item: any) => ({
         id: `spotify-${item.id}`,
         title: item.name,
         author: item.authors?.[0]?.name || "Unknown Author",
@@ -205,7 +293,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get Spotify audiobook details
-  app.get("/api/spotify/audiobook/:id", async (req, res) => {
+  app.get("/api/spotify/audiobook/:id", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       const spotify = await getUncachableSpotifyClient();
@@ -224,7 +312,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         publishedYear: null,
         source: "spotify",
         sourceId: audiobook.id,
-        chapters: audiobook.chapters?.items?.map(ch => ({
+        chapters: audiobook.chapters?.items?.map((ch: any) => ({
           id: ch.id,
           name: ch.name,
           duration_ms: ch.duration_ms,
@@ -237,12 +325,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get user's Spotify library audiobooks
-  app.get("/api/spotify/library", async (req, res) => {
+  app.get("/api/spotify/library", async (req: Request, res: Response) => {
     try {
       const spotify = await getUncachableSpotifyClient();
       const savedAudiobooks = await spotify.currentUser.audiobooks.savedAudiobooks(20);
       
-      const audiobooks = savedAudiobooks.items.map(item => ({
+      const audiobooks = savedAudiobooks.items.map((item: any) => ({
         id: `spotify-${item.id}`,
         title: item.name,
         author: item.authors?.[0]?.name || "Unknown Author",
@@ -267,13 +355,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Stripe subscription routes
   
   // GET /api/subscription/status - Get current subscription status
-  app.get("/api/subscription/status", async (req: any, res) => {
+  app.get("/api/subscription/status", async (req: Request, res: Response) => {
     try {
       if (!req.isAuthenticated() || !req.user) {
         return res.status(401).json({ message: "Unauthorized" });
       }
       
-      const userId = req.user.claims?.sub || req.user.id;
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
       
       if (!user) {
@@ -293,7 +381,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // POST /api/subscription/create-checkout - Create Stripe checkout session
-  app.post("/api/subscription/create-checkout", async (req: any, res) => {
+  app.post("/api/subscription/create-checkout", async (req: Request, res: Response) => {
     try {
       if (!stripe) {
         return res.status(503).json({ message: "Payment system not configured" });
@@ -303,7 +391,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Unauthorized" });
       }
       
-      const userId = req.user.claims?.sub || req.user.id;
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
       
       if (!user) {
@@ -362,7 +450,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // POST /api/subscription/cancel - Cancel subscription
-  app.post("/api/subscription/cancel", async (req: any, res) => {
+  app.post("/api/subscription/cancel", async (req: Request, res: Response) => {
     try {
       if (!stripe) {
         return res.status(503).json({ message: "Payment system not configured" });
@@ -372,7 +460,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Unauthorized" });
       }
       
-      const userId = req.user.claims?.sub || req.user.id;
+      const userId = req.user.id;
       const user = await storage.getUser(userId);
       
       if (!user || !user.stripeSubscriptionId) {
@@ -403,13 +491,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============== LISTENING HISTORY API ==============
   
   // GET /api/history - Get user's listening history
-  app.get("/api/history", async (req: any, res) => {
+  app.get("/api/history", async (req: Request, res: Response) => {
     try {
       if (!req.isAuthenticated() || !req.user) {
         return res.status(401).json({ message: "Unauthorized" });
       }
       
-      const userId = req.user.claims?.sub || req.user.id;
+      const userId = req.user.id;
       const limit = parseInt(req.query.limit as string) || 50;
       const history = await storage.getListeningHistory(userId, limit);
       
@@ -421,13 +509,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // GET /api/history/continue - Get continue listening items
-  app.get("/api/history/continue", async (req: any, res) => {
+  app.get("/api/history/continue", async (req: Request, res: Response) => {
     try {
       if (!req.isAuthenticated() || !req.user) {
         return res.status(401).json({ message: "Unauthorized" });
       }
       
-      const userId = req.user.claims?.sub || req.user.id;
+      const userId = req.user.id;
       const limit = parseInt(req.query.limit as string) || 10;
       const continueListening = await storage.getContinueListening(userId, limit);
       
@@ -439,13 +527,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // POST /api/history/progress - Update listening progress
-  app.post("/api/history/progress", async (req: any, res) => {
+  app.post("/api/history/progress", async (req: Request, res: Response) => {
     try {
       if (!req.isAuthenticated() || !req.user) {
         return res.status(401).json({ message: "Unauthorized" });
       }
       
-      const userId = req.user.claims?.sub || req.user.id;
+      const userId = req.user.id;
       const { bookId, currentTime, bookTitle, bookAuthor, bookCover, totalDuration } = req.body;
       
       if (!bookId || currentTime === undefined || !bookTitle) {
@@ -468,7 +556,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // POST /api/webhook/stripe - Stripe webhook handler
-  app.post("/api/webhook/stripe", async (req, res) => {
+  app.post("/api/webhook/stripe", async (req: Request, res: Response) => {
     if (!stripe) {
       return res.status(503).json({ message: "Payment system not configured" });
     }
@@ -633,6 +721,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     
     res.json({ received: true });
+  });
+
+  // Admin storage (S3/GCS) - require auth; optionally restrict to ADMIN_EMAILS
+  app.get("/api/admin/storage", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const adapter = await getPrimaryStorageAdapter();
+      if (!adapter) return res.status(503).json({ message: "Storage not configured" });
+      const prefix = (req.query.prefix as string) || "";
+      const objects = await adapter.listObjects(prefix);
+      res.json({ objects });
+    } catch (error) {
+      console.error("Admin list storage error:", error);
+      res.status(500).json({ message: "Failed to list storage" });
+    }
+  });
+
+  app.post("/api/admin/upload", requireAdmin, upload.single("file"), async (req: Request, res: Response) => {
+    try {
+      const adapter = await getPrimaryStorageAdapter();
+      if (!adapter) return res.status(503).json({ message: "Storage not configured" });
+      const file = (req as any).file;
+      if (!file || !file.buffer) return res.status(400).json({ message: "No file uploaded" });
+      const title = (req.body?.title as string) || file.originalname || "Untitled";
+      const author = (req.body?.author as string) || "Unknown";
+      const key = `uploads/${Date.now()}-${file.originalname || "audio"}`;
+      const contentType = file.mimetype || "audio/mpeg";
+      await adapter.putObject(key, file.buffer, contentType);
+      const source = (await getS3Adapter()) ? "s3" : "gcs";
+      const duration = 0;
+      const book = await storage.insertUploadedBook({
+        title,
+        author,
+        narrator: null,
+        description: null,
+        duration,
+        coverImage: null,
+        audioUrl: "/api/stream/",
+        genre: null,
+        publishedYear: null,
+        source,
+        sourceId: key,
+        totalTime: "0:00:00",
+        language: "English",
+      });
+      res.status(201).json(book);
+    } catch (error) {
+      console.error("Admin upload error:", error);
+      res.status(500).json({ message: "Failed to upload" });
+    }
+  });
+
+  app.delete("/api/admin/storage/:key", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const key = decodeURIComponent(req.params.key);
+      const adapter = await getPrimaryStorageAdapter();
+      if (!adapter) return res.status(503).json({ message: "Storage not configured" });
+      await adapter.deleteObject(key);
+      await db.delete(books).where(eq(books.sourceId, key));
+      res.json({ deleted: key });
+    } catch (error) {
+      console.error("Admin delete storage error:", error);
+      res.status(500).json({ message: "Failed to delete" });
+    }
   });
 
   const httpServer = createServer(app);

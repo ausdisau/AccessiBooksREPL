@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
@@ -61,16 +62,29 @@ app.use((req, res, next) => {
     serveStatic(app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
-    log(`serving on port ${port}`);
+  // Serve on PORT (default 5000). Use 5000 to avoid needing admin for port 80.
+  const preferredPort = parseInt(process.env.PORT || '5000', 10);
+  const fallbackPort = preferredPort === 80 ? 5000 : 5000;
+
+  function tryListen(p: number) {
+    // Bind to "::" so both IPv4 (127.0.0.1) and IPv6 (::1) work when using "localhost"
+    const host = "::";
+    server.listen(p, host, () => {
+      log(`Server running → http://localhost:${p}  or  http://127.0.0.1:${p}`);
+    });
+  }
+
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      log(`Port ${preferredPort} in use. Trying ${fallbackPort}...`);
+      tryListen(fallbackPort);
+    } else if ((err.code === "EACCES" || err.code === "EPERM") && preferredPort === 80) {
+      log(`Port 80 requires administrator. Falling back to port 5000.`);
+      tryListen(5000);
+    } else {
+      throw err;
+    }
   });
+
+  tryListen(preferredPort);
 })();

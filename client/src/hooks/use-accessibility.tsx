@@ -7,10 +7,10 @@ export function useAccessibility() {
   );
 
   useEffect(() => {
-    // Apply settings to document
     document.documentElement.classList.toggle("high-contrast", settings.highContrast);
     document.documentElement.classList.toggle("dyslexia-font", settings.dyslexiaFont);
     document.documentElement.classList.toggle("dark", settings.darkMode);
+    document.documentElement.classList.toggle("reduce-motion", settings.reducedMotion);
   }, [settings]);
 
   const toggleHighContrast = () => {
@@ -31,10 +31,17 @@ export function useAccessibility() {
     localStorageService.saveSettings(newSettings);
   };
 
+  const toggleReducedMotion = () => {
+    const newSettings = { ...settings, reducedMotion: !settings.reducedMotion };
+    setSettings(newSettings);
+    localStorageService.saveSettings(newSettings);
+  };
+
   return {
     settings,
     toggleHighContrast,
     toggleDyslexiaFont,
     toggleDarkMode,
+    toggleReducedMotion,
   };
 }

@@ -27,7 +27,7 @@ export const insertBookSchema = createInsertSchema(books).omit({
 export type InsertBook = z.infer<typeof insertBookSchema>;
 export type Book = typeof books.$inferSelect;
 
-// Session storage table for Replit Auth
+// Session storage table
 export const sessions = pgTable(
   "sessions",
   {
@@ -50,7 +50,7 @@ export const users = pgTable("users", {
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
   passwordHash: varchar("password_hash"), // For username/password auth
-  authProvider: varchar("auth_provider").default("local"), // local, google, facebook, microsoft, auth0, replit
+  authProvider: varchar("auth_provider").default("local"), // local, google, facebook, microsoft, auth0
   providerId: varchar("provider_id"), // ID from OAuth provider
   subscriptionTier: varchar("subscription_tier").default("free"), // free, premium
   stripeCustomerId: varchar("stripe_customer_id"), // Stripe customer ID
@@ -95,6 +95,17 @@ export const insertListeningHistorySchema = createInsertSchema(listeningHistory)
 
 export type InsertListeningHistory = z.infer<typeof insertListeningHistorySchema>;
 export type ListeningHistory = typeof listeningHistory.$inferSelect;
+
+// User preferences for hyper-contextual UX
+export const userPreferences = pgTable("user_preferences", {
+  userId: varchar("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  defaultSpeed: real("default_speed").default(1),
+  preferredSections: jsonb("preferred_sections").$type<string[]>().default([]), // e.g. ["continue-listening", "disability-voices", "trending", "new-arrivals"]
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type UserPreferences = typeof userPreferences.$inferSelect;
+export type InsertUserPreferences = typeof userPreferences.$inferInsert;
 
 // Bookmark type for frontend use
 export interface Bookmark {

@@ -26,8 +26,9 @@ export function Player({ book, onBackToLibrary }: PlayerProps) {
   return (
     <div>
       <div className="mb-6">
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
+          className="rounded-xl"
           onClick={onBackToLibrary}
           data-testid="button-back-to-library"
         >

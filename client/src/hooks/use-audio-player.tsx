@@ -46,6 +46,22 @@ export function useAudioPlayer({ bookId, audioUrl }: UseAudioPlayerProps = {}) {
     return () => clearInterval(interval);
   }, [bookId, isPlaying, currentTime]);
 
+  // Configure audio element for high-fidelity streaming
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    // Enable high-quality audio settings
+    audio.preload = 'auto'; // Preload for better streaming
+    audio.crossOrigin = 'anonymous'; // Allow CORS for external sources
+    
+    // Set volume to maximum for high fidelity (user can adjust via system)
+    // Note: We don't set volume here as it should respect user preferences
+    
+    // Enable better buffering for high-quality streams
+    // The browser will handle this automatically with preload="auto"
+  }, []);
+
   // Audio event handlers
   useEffect(() => {
     const audio = audioRef.current;
@@ -78,11 +94,18 @@ export function useAudioPlayer({ bookId, audioUrl }: UseAudioPlayerProps = {}) {
     };
   }, []);
 
-  // Update audio src when audioUrl changes
+  // Update audio src when audioUrl changes with high-fidelity settings
   useEffect(() => {
     if (audioRef.current && audioUrl) {
-      audioRef.current.src = audioUrl;
-      audioRef.current.load();
+      const audio = audioRef.current;
+      
+      // Configure for high-quality streaming
+      audio.preload = 'auto'; // Preload entire file for smooth playback
+      audio.crossOrigin = 'anonymous'; // Enable CORS for external sources
+      
+      // Set source and reload
+      audio.src = audioUrl;
+      audio.load(); // Force reload to apply new settings
     }
   }, [audioUrl]);
 

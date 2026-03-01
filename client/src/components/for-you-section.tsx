@@ -56,8 +56,8 @@ export function ForYouSection({ books, onSelectBook }: ForYouSectionProps) {
   return (
     <section className="mb-8" aria-label="Recommended For You">
       <div className="flex items-center gap-2 mb-4">
-        <Sparkles className="h-5 w-5 text-primary" />
-        <h2 className="text-xl font-semibold">For You</h2>
+        <Sparkles className="h-5 w-5 text-accent" aria-hidden="true" />
+        <h2 className="font-display text-xl font-semibold">For You</h2>
       </div>
       <ScrollArea className="w-full whitespace-nowrap">
         <div className="flex gap-4 pb-4">

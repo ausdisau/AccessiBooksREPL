@@ -101,50 +101,44 @@ export function GenreCards({ books, onGenreSelect, selectedGenre }: GenreCardsPr
 
   return (
     <section className="mb-8" aria-label="Browse by Genre">
-      <h2 className="text-xl font-semibold mb-4">Browse by Genre</h2>
+      <h2 className="font-display text-xl font-semibold mb-4">Browse by Genre</h2>
       <ScrollArea className="w-full whitespace-nowrap">
         <div className="flex gap-3 pb-4">
-          <Card 
-            className={`flex-shrink-0 w-32 cursor-pointer transition-all ${
-              selectedGenre === null 
-                ? "ring-2 ring-primary" 
-                : "hover:scale-105"
+          <Card
+            className={`flex-shrink-0 w-32 cursor-pointer transition-all rounded-xl overflow-hidden border-2 ${
+              selectedGenre === null ? "border-primary ring-2 ring-primary/20" : "border-border hover:border-primary/40"
             }`}
             onClick={() => onGenreSelect("")}
           >
             <CardContent className="p-0">
-              <div className={`h-20 bg-gradient-to-br from-gray-500 to-gray-700 rounded-t-lg flex items-center justify-center`}>
-                <BookOpen className="h-8 w-8 text-white" />
+              <div className="h-20 bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center">
+                <BookOpen className="h-8 w-8 text-primary-foreground" />
               </div>
-              <div className="p-2 text-center">
-                <p className="text-sm font-medium">All Books</p>
+              <div className="p-2.5 text-center">
+                <p className="text-sm font-medium">All</p>
                 <p className="text-xs text-muted-foreground">{books.length}</p>
               </div>
             </CardContent>
           </Card>
-          
           {availableGenres.map(([key, config]) => {
             const Icon = config.icon;
             const count = genreCounts[key] || 0;
             const isSelected = selectedGenre?.toLowerCase() === key;
-            
             return (
-              <Card 
+              <Card
                 key={key}
-                className={`flex-shrink-0 w-32 cursor-pointer transition-all ${
-                  isSelected 
-                    ? "ring-2 ring-primary" 
-                    : "hover:scale-105"
+                className={`flex-shrink-0 w-32 cursor-pointer transition-all rounded-xl overflow-hidden border-2 ${
+                  isSelected ? "border-primary ring-2 ring-primary/20" : "border-border hover:border-primary/40"
                 }`}
                 onClick={() => onGenreSelect(key)}
               >
                 <CardContent className="p-0">
-                  <div className={`h-20 bg-gradient-to-br ${config.gradient} rounded-t-lg flex items-center justify-center`}>
+                  <div className={`h-20 bg-gradient-to-br ${config.gradient} flex items-center justify-center`}>
                     <Icon className="h-8 w-8 text-white" />
                   </div>
-                  <div className="p-2 text-center">
+                  <div className="p-2.5 text-center">
                     <p className="text-sm font-medium">{config.label}</p>
-                    <p className="text-xs text-muted-foreground">{count} books</p>
+                    <p className="text-xs text-muted-foreground">{count}</p>
                   </div>
                 </CardContent>
               </Card>
