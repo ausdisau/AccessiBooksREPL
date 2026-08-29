@@ -37,7 +37,30 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: TypeScript
-        run: npm run typecheck
+        id: typecheck
+        continue-on-error: true
+        run: npm run typecheck 2>&1 | tee typecheck.log
 
       - name: React Native tests
-        run: npm run test:accessibility -- --runInBand
+        id: tests
+        continue-on-error: true
+        run: npm run test:accessibility -- --runInBand 2>&1 | tee tests.log
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-ci-diagnostics
+          path: |
+            mobile/typecheck.log
+            mobile/tests.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Enforce verification gate
+        if: always()
+        run: |
+          if [ "${{ steps.typecheck.outcome }}" != "success" ] || [ "${{ steps.tests.outcome }}" != "success" ]; then
+            echo "Mobile verification failed. Download the mobile-ci-diagnostics artifact for details."
+            exit 1
+          fi
