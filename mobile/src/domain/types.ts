@@ -52,9 +52,13 @@ export interface ExperienceProfile {
   };
 }
 
-export type ExperienceProfilePatch = {
-  [K in keyof ExperienceProfile]?: Partial<ExperienceProfile[K]>;
-};
+export interface ExperienceProfilePatch {
+  visual?: Partial<ExperienceProfile['visual']>;
+  interaction?: Partial<ExperienceProfile['interaction']>;
+  reading?: Partial<ExperienceProfile['reading']>;
+  didactic?: Partial<ExperienceProfile['didactic']>;
+  autonomy?: Partial<ExperienceProfile['autonomy']>;
+}
 
 export type ExperienceAction =
   | { type: 'PROPOSE_PROFILE_CHANGE'; patch: ExperienceProfilePatch }
