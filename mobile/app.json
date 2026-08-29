@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "AccessiBooks",
+    "slug": "accessibooks",
+    "version": "0.1.0",
+    "orientation": "default",
+    "scheme": "accessibooks",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "au.org.ad.accessibooks"
+    },
+    "android": {
+      "package": "au.org.ad.accessibooks"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "enableBackgroundPlayback": true,
+          "enableBackgroundRecording": false
+        }
+      ],
+      "posthog-react-native/expo"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
