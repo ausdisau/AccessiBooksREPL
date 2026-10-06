@@ -6,7 +6,7 @@ AccessiBooks is one platform with multiple distribution experiences, not a colle
 
 Canonical content identity, rights provenance, source records, accessibility metadata and acquisition state are shared. Each distribution controls presentation, audience, collection membership and policy without duplicating the underlying book/edition.
 
-## Initial distributions
+## Implemented distributions
 
 ### AccessiBooks Core
 General consumer reader and player.
@@ -16,21 +16,18 @@ Path: `/hospitals`
 
 Focus:
 - bedside leisure reading
-- long-stay and rehabilitation reading
-- paediatrics/family reading
+- long-stay, paediatrics and rehabilitation reading
 - hospital library discovery
 - strict separation of leisure reading from clinical information
-- clinical-review gate for any patient-facing health content
 
 ### AccessiBooks Educate
 Path: `/educate`
 
 Focus:
+- schools, TAFE and learning settings
 - curriculum and class texts
 - study support
 - institution-managed access
-- learner-selected formats
-- classroom/institution entitlement kept separate from metadata discovery
 
 ### AccessiBooks Libraries
 Path: `/libraries`
@@ -40,18 +37,15 @@ Focus:
 - local/external holdings
 - borrowing and SSO routes
 - open-access alternatives
-- verified holdings/borrow route required before availability claims
 
 ### AccessiBooks Community
 Path: `/community`
 
 Focus:
 - disability-led collections
-- Easy Read
-- AAC-friendly and large-text presentation
+- Easy Read and AAC-friendly presentation
 - independent living and community stories
 - non-medicalised disability framing
-- supporter assistance without overriding reader control
 
 ### AccessiBooks Kids
 Path: `/kids`
@@ -61,7 +55,69 @@ Focus:
 - large controls
 - reduced-motion friendly interactions
 - family/supporter-assisted use
-- age suitability and content warnings based on verified metadata
+
+### AccessiBooks Aged Care
+Path: `/aged-care`
+
+Focus:
+- residential aged care and home care
+- large-text and audio options
+- familiar interests and later-life reading
+- no inference of capacity from age or diagnosis
+
+### AccessiBooks Rehab
+Path: `/rehab`
+
+Focus:
+- inpatient, outpatient and community rehabilitation
+- leisure reading alongside reviewed rehabilitation education
+- communication access and AAC
+- no scoring of recovery or inferred goals
+
+### AccessiBooks Workplace
+Path: `/workplace`
+
+Focus:
+- accessible induction and professional learning
+- workplace rights and career development
+- confidential, reader-controlled access preferences
+- entitlement separate from discovery
+
+### AccessiBooks Justice
+Path: `/justice`
+
+Focus:
+- court and legal-service information
+- education and leisure reading in justice settings
+- jurisdiction/currency provenance
+- strict separation of legal information from legal advice
+
+### AccessiBooks University
+Path: `/university`
+
+Focus:
+- course readings and textbooks
+- DOI research discovery
+- institutional entitlements
+- publisher accessibility claims separated from independent testing
+
+### AccessiBooks Easy Read
+Path: `/easy-read`
+
+Focus:
+- Easy Read as a reader-selected format
+- plain-language public information
+- rights/community/health collections
+- no inference of cognitive capacity from format preference
+
+### AccessiBooks Professional / Clinical Learning
+Path: `/professional`
+
+Focus:
+- clinicians, allied health, disability workers and educators
+- research, standards, simulation and professional learning
+- provenance and entitlement
+- clinical review before material is labelled as guidance
 
 ## Shared data model
 
@@ -184,18 +240,13 @@ New future distributions should normally require:
 4. membership data;
 5. optional specialised UI components only where genuinely necessary.
 
-## Potential future flavors
+## Extension model
 
-- AccessiBooks Aged Care
-- AccessiBooks Rehab
-- AccessiBooks Justice
-- AccessiBooks Workplace
-- AccessiBooks University
-- AccessiBooks First Nations
-- AccessiBooks Easy Read
-- AccessiBooks Professional / Clinical Learning
-
-These are architecture-ready concepts, not deployed features.
+Additional distributions can be added without forking the application. A new distribution normally needs only:
+1. a distribution manifest;
+2. a server seed/policy profile;
+3. optional distribution-specific membership data;
+4. specialised UI only where the shared page is insufficient.
 
 ## Status semantics
 
