@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Baby, Book as BookIcon, GraduationCap, Hospital, LibraryBig, Play, Users } from "lucide-react";
+import { Activity, Baby, Book as BookIcon, Briefcase, FileText, GraduationCap, HeartPulse, Hospital, LibraryBig, Play, Scale, Stethoscope, University, Users } from "lucide-react";
 import {
   SidebarProvider,
   Sidebar,
@@ -9,7 +9,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 
-export type AppView = "library" | "hospitals" | "educate" | "libraries" | "community" | "kids" | "player";
+export type AppView = "library" | "hospitals" | "educate" | "libraries" | "community" | "kids" | "aged-care" | "rehab" | "workplace" | "justice" | "university" | "easy-read" | "professional" | "player";
 
 interface AppLayoutProps {
   currentView: AppView;
@@ -100,6 +100,41 @@ export function AppLayout({
             >
               <Baby className="h-5 w-5" aria-hidden="true" />
               <span>Kids</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton isActive={currentView === "aged-care"} onClick={() => onNavigate("aged-care")} aria-current={currentView === "aged-care" ? "page" : undefined} className="rounded-xl" data-testid="tab-aged-care">
+              <HeartPulse className="h-5 w-5" aria-hidden="true" /><span>Aged Care</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton isActive={currentView === "rehab"} onClick={() => onNavigate("rehab")} aria-current={currentView === "rehab" ? "page" : undefined} className="rounded-xl" data-testid="tab-rehab">
+              <Activity className="h-5 w-5" aria-hidden="true" /><span>Rehab</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton isActive={currentView === "workplace"} onClick={() => onNavigate("workplace")} aria-current={currentView === "workplace" ? "page" : undefined} className="rounded-xl" data-testid="tab-workplace">
+              <Briefcase className="h-5 w-5" aria-hidden="true" /><span>Workplace</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton isActive={currentView === "justice"} onClick={() => onNavigate("justice")} aria-current={currentView === "justice" ? "page" : undefined} className="rounded-xl" data-testid="tab-justice">
+              <Scale className="h-5 w-5" aria-hidden="true" /><span>Justice</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton isActive={currentView === "university"} onClick={() => onNavigate("university")} aria-current={currentView === "university" ? "page" : undefined} className="rounded-xl" data-testid="tab-university">
+              <University className="h-5 w-5" aria-hidden="true" /><span>University</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton isActive={currentView === "easy-read"} onClick={() => onNavigate("easy-read")} aria-current={currentView === "easy-read" ? "page" : undefined} className="rounded-xl" data-testid="tab-easy-read">
+              <FileText className="h-5 w-5" aria-hidden="true" /><span>Easy Read</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton isActive={currentView === "professional"} onClick={() => onNavigate("professional")} aria-current={currentView === "professional" ? "page" : undefined} className="rounded-xl" data-testid="tab-professional">
+              <Stethoscope className="h-5 w-5" aria-hidden="true" /><span>Professional</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
