@@ -136,6 +136,10 @@ export const hospitalCatalogueItems = pgTable("hospital_catalogue_items", {
   contributors: jsonb("contributors").$type<string[]>().default([]),
   description: text("description"),
   publicationYear: integer("publication_year"),
+  publisher: text("publisher"),
+  editionStatement: text("edition_statement"),
+  oclcNumber: varchar("oclc_number", { length: 32 }),
+  isbn10: varchar("isbn10", { length: 16 }),
   language: varchar("language", { length: 16 }).notNull().default("en"),
   audience: varchar("audience", { length: 32 }).notNull().default("general"),
   contentKind: varchar("content_kind", { length: 32 }).notNull().default("book"),
@@ -171,6 +175,8 @@ export const hospitalCatalogueItems = pgTable("hospital_catalogue_items", {
   durationSeconds: integer("duration_seconds"),
   estimatedReadingMinutes: integer("estimated_reading_minutes"),
   isbn13: varchar("isbn13", { length: 20 }),
+  commercialTitle: boolean("commercial_title").notNull().default(false),
+  acquisitionStatus: varchar("acquisition_status", { length: 40 }).notNull().default("not_acquired"),
 
   // Denormalised field for simple, portable PostgreSQL search. Importers should
   // rebuild it whenever title/author/subject metadata changes.
@@ -191,6 +197,8 @@ export const hospitalCatalogueItems = pgTable("hospital_catalogue_items", {
   index("idx_hospital_catalogue_availability").on(table.availabilityStatus),
   index("idx_hospital_catalogue_rights").on(table.rightsStatus),
   index("idx_hospital_catalogue_source").on(table.sourceProvider),
+  index("idx_hospital_catalogue_isbn13").on(table.isbn13),
+  index("idx_hospital_catalogue_oclc").on(table.oclcNumber),
 ]);
 
 export const insertHospitalCatalogueItemSchema = createInsertSchema(hospitalCatalogueItems).omit({
