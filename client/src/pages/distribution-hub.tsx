@@ -1,4 +1,4 @@
-import { ArrowRight, Hospital } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { distributions } from "@/lib/distributions";
 
