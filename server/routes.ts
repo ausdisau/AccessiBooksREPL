@@ -19,6 +19,7 @@ import { importWorldCatIsbn } from "./worldcatCatalogue";
 import { createHospitalCatalogueAcquisition, createHospitalCatalogueAccessRoute, ensureHospitalCatalogueSuppliersSeeded, getHospitalCatalogueAcquisitions, getPublicHospitalCatalogueAccessOptions, listHospitalCatalogueSuppliers, updateHospitalCatalogueAcquisition, updateHospitalCatalogueAccessRoute } from "./hospitalCatalogueAcquisitions";
 import { ebscoStatus, getEbscoProfileInfo, isEbscoConfigured, retrieveEbscoRecord, searchEbsco, searchEbscoByIsbn, summariseEbscoFullText } from "./ebsco";
 import { discoverVitalSourceCandidate } from "./vitalsourceCatalogue";
+import { enrichHospitalKnowledgeByDoi, getHospitalKnowledgeEnrichmentRun, listHospitalKnowledgeSources, type DoiEnrichmentProvider } from "./doiEnrichment";
 import { getVitalSourceProduct, isVitalSourceConfigured, vitalSourceStatus } from "./vitalsource";
 import { getNewsApiSources, isNewsApiConfigured, newsApiStatus, searchNewsApi } from "./newsApi";
 import { getScienceDirectArticleByDoi, isScienceDirectConfigured, scienceDirectStatus, searchScienceDirect } from "./scienceDirect";
@@ -780,6 +781,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(await discoverVitalSourceCandidate(req.params.id));
     } catch (error) {
       res.status(502).json({ message: error instanceof Error ? error.message : "VitalSource discovery failed" });
+    }
+  });
+
+  // Unified DOI enrichment: Crossref establishes identity; configured providers
+  // enrich the same canonical record without silently escalating it to clinical guidance.
+  app.post("/api/hospitals/knowledge/enrich-doi", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const doi = typeof req.body?.doi === "string" ? req.body.doi : "";
+      if (!doi) return res.status(400).json({ message: "doi is required" });
+
+      const allowedProviders = new Set<DoiEnrichmentProvider>([
+        "crossref",
+        "springerNature",
+        "scienceDirect",
+        "webOfScience",
+        "ebsco",
+      ]);
+
+      let providers: DoiEnrichmentProvider[] | undefined;
+      if (Array.isArray(req.body?.providers)) {
+        providers = req.body.providers.filter(
+          (value: unknown): value is DoiEnrichmentProvider =>
+            typeof value === "string" &&
+            allowedProviders.has(value as DoiEnrichmentProvider),
+        );
+        if (!providers.length) {
+          return res.status(400).json({
+            message: "providers did not contain any supported provider names",
+            supportedProviders: [...allowedProviders],
+          });
+        }
+      }
+
+      const user = req.user as { email?: string; id?: string } | undefined;
+      const result = await enrichHospitalKnowledgeByDoi(doi, {
+        providers,
+        includeFullText: req.body?.includeFullText === true,
+        trigger: "admin_api",
+        createdBy: user?.email || user?.id || null,
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      console.error("Unified DOI enrichment failed:", error);
+      res.status(502).json({
+        message: "Unified DOI enrichment failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/hospitals/knowledge/enrichment-runs/:id", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const run = await getHospitalKnowledgeEnrichmentRun(req.params.id);
+      if (!run) return res.status(404).json({ message: "Enrichment run not found" });
+      res.json(run);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load enrichment run" });
+    }
+  });
+
+  app.get("/api/hospitals/knowledge/:id/sources", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await listHospitalKnowledgeSources(req.params.id));
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load knowledge provenance" });
     }
   });
 
