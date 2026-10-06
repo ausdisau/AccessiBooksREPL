@@ -56,14 +56,14 @@ const supplierSeeds = [
     name: "EBSCO",
     supplierType: "institutional_content",
     websiteUrl: "https://www.ebsco.com/",
-    integrationStatus: "candidate",
+    integrationStatus: "in_testing",
     supportsDiscovery: true,
     supportsAvailability: true,
     supportsCheckout: false,
     supportsInstitutionalLicensing: true,
-    supportsAccessibleFormats: false,
+    supportsAccessibleFormats: true,
     configurationNote:
-      "Useful when a hospital or health network has an EBSCO subscription. EDS, HoldingsIQ, LinkIQ and entitlement APIs expose institution-specific discovery and access.",
+      "EDS integration is implemented for institution-scoped discovery, ISBN search, profile inspection and dynamic retrieve. EBSCO full-text links may expire and must not be persisted as permanent catalogue URLs. Production requires an enabled EDS customer profile and EBSCO credentials.",
   },
   {
     code: "bowker",
