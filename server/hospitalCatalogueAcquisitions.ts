@@ -1,4 +1,4 @@
-import { and, eq, isNull, lte, or, gte } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "./db";
 import {
   hospitalCatalogueItems,
@@ -359,4 +359,171 @@ export async function getHospitalCatalogueAcquisitions(catalogueItemId: string) 
     result.push({ ...acquisition, routes });
   }
   return result;
+}
+
+
+export async function updateHospitalCatalogueAcquisition(
+  acquisitionId: string,
+  patch: Partial<Omit<CreateAcquisitionInput, "catalogueItemId" | "supplierCode">> & { supplierCode?: string | null },
+) {
+  const [existing] = await db
+    .select()
+    .from(hospitalCatalogueAcquisitions)
+    .where(eq(hospitalCatalogueAcquisitions.id, acquisitionId))
+    .limit(1);
+  if (!existing) throw new Error("Acquisition not found");
+
+  if (patch.acquisitionStatus === "active" && !(patch.verifiedAt ?? existing.verifiedAt)) {
+    throw new Error("An active acquisition requires verifiedAt");
+  }
+
+  let supplierId = existing.supplierId;
+  if (patch.supplierCode !== undefined) {
+    supplierId = patch.supplierCode ? await supplierIdFor(patch.supplierCode) : null;
+    if (patch.supplierCode && !supplierId) throw new Error(`Unknown supplier code: ${patch.supplierCode}`);
+  }
+
+  const [updated] = await db
+    .update(hospitalCatalogueAcquisitions)
+    .set({
+      ...(patch.supplierCode !== undefined && { supplierId }),
+      ...(patch.supplierTitleId !== undefined && { supplierTitleId: patch.supplierTitleId }),
+      ...(patch.supplierUrl !== undefined && { supplierUrl: patch.supplierUrl }),
+      ...(patch.scopeType !== undefined && { scopeType: patch.scopeType }),
+      ...(patch.scopeKey !== undefined && { scopeKey: patch.scopeKey }),
+      ...(patch.acquisitionStatus !== undefined && { acquisitionStatus: patch.acquisitionStatus }),
+      ...(patch.licenceModel !== undefined && { licenceModel: patch.licenceModel }),
+      ...(patch.accessMode !== undefined && { accessMode: patch.accessMode }),
+      ...(patch.territory !== undefined && { territory: patch.territory }),
+      ...(patch.formats !== undefined && { formats: patch.formats }),
+      ...(patch.accessibilityFeatures !== undefined && { accessibilityFeatures: patch.accessibilityFeatures }),
+      ...(patch.copiesOrSeats !== undefined && { copiesOrSeats: patch.copiesOrSeats }),
+      ...(patch.concurrentUsers !== undefined && { concurrentUsers: patch.concurrentUsers }),
+      ...(patch.loanPeriodDays !== undefined && { loanPeriodDays: patch.loanPeriodDays }),
+      ...(patch.agreementReference !== undefined && { agreementReference: patch.agreementReference }),
+      ...(patch.rightsBasis !== undefined && { rightsBasis: patch.rightsBasis }),
+      ...(patch.rightsNote !== undefined && { rightsNote: patch.rightsNote }),
+      ...(patch.termsUrl !== undefined && { termsUrl: patch.termsUrl }),
+      ...(patch.startsAt !== undefined && { startsAt: patch.startsAt }),
+      ...(patch.endsAt !== undefined && { endsAt: patch.endsAt }),
+      ...(patch.verifiedAt !== undefined && { verifiedAt: patch.verifiedAt }),
+      ...(patch.verifiedBy !== undefined && { verifiedBy: patch.verifiedBy }),
+      updatedAt: new Date(),
+    })
+    .where(eq(hospitalCatalogueAcquisitions.id, acquisitionId))
+    .returning();
+
+  await recomputeCatalogueEntitlement(existing.catalogueItemId);
+  return updated;
+}
+
+export async function updateHospitalCatalogueAccessRoute(
+  routeId: string,
+  patch: Partial<Omit<CreateAccessRouteInput, "acquisitionId">>,
+) {
+  const [existingRoute] = await db
+    .select()
+    .from(hospitalCatalogueAccessRoutes)
+    .where(eq(hospitalCatalogueAccessRoutes.id, routeId))
+    .limit(1);
+  if (!existingRoute) throw new Error("Access route not found");
+
+  if (patch.availabilityStatus === "available" && !(patch.lastVerifiedAt ?? existingRoute.lastVerifiedAt)) {
+    throw new Error("An available access route requires lastVerifiedAt");
+  }
+
+  const [updated] = await db
+    .update(hospitalCatalogueAccessRoutes)
+    .set({
+      ...(patch.format !== undefined && { format: patch.format }),
+      ...(patch.routeType !== undefined && { routeType: patch.routeType }),
+      ...(patch.url !== undefined && { url: patch.url }),
+      ...(patch.requiresAuthentication !== undefined && { requiresAuthentication: patch.requiresAuthentication }),
+      ...(patch.requiresLibraryCard !== undefined && { requiresLibraryCard: patch.requiresLibraryCard }),
+      ...(patch.drmProtected !== undefined && { drmProtected: patch.drmProtected }),
+      ...(patch.downloadAllowed !== undefined && { downloadAllowed: patch.downloadAllowed }),
+      ...(patch.offlineAllowed !== undefined && { offlineAllowed: patch.offlineAllowed }),
+      ...(patch.accessibleFormat !== undefined && { accessibleFormat: patch.accessibleFormat }),
+      ...(patch.accessibilityFeatures !== undefined && { accessibilityFeatures: patch.accessibilityFeatures }),
+      ...(patch.availabilityStatus !== undefined && { availabilityStatus: patch.availabilityStatus }),
+      ...(patch.lastVerifiedAt !== undefined && { lastVerifiedAt: patch.lastVerifiedAt }),
+      updatedAt: new Date(),
+    })
+    .where(eq(hospitalCatalogueAccessRoutes.id, routeId))
+    .returning();
+
+  const [acquisition] = await db
+    .select({ catalogueItemId: hospitalCatalogueAcquisitions.catalogueItemId })
+    .from(hospitalCatalogueAcquisitions)
+    .where(eq(hospitalCatalogueAcquisitions.id, existingRoute.acquisitionId))
+    .limit(1);
+  if (acquisition) await recomputeCatalogueEntitlement(acquisition.catalogueItemId);
+  return updated;
+}
+
+export async function getPublicHospitalCatalogueAccessOptions(catalogueItemId: string) {
+  await ensureHospitalCatalogueSuppliersSeeded();
+  const acquisitions = await db
+    .select({
+      id: hospitalCatalogueAcquisitions.id,
+      supplierId: hospitalCatalogueAcquisitions.supplierId,
+      accessMode: hospitalCatalogueAcquisitions.accessMode,
+      acquisitionStatus: hospitalCatalogueAcquisitions.acquisitionStatus,
+      startsAt: hospitalCatalogueAcquisitions.startsAt,
+      endsAt: hospitalCatalogueAcquisitions.endsAt,
+      verifiedAt: hospitalCatalogueAcquisitions.verifiedAt,
+      scopeType: hospitalCatalogueAcquisitions.scopeType,
+      scopeKey: hospitalCatalogueAcquisitions.scopeKey,
+    })
+    .from(hospitalCatalogueAcquisitions)
+    .where(eq(hospitalCatalogueAcquisitions.catalogueItemId, catalogueItemId));
+
+  const now = new Date();
+  const options = [];
+  for (const acquisition of acquisitions) {
+    const current =
+      acquisition.acquisitionStatus === "active" &&
+      Boolean(acquisition.verifiedAt) &&
+      (!acquisition.startsAt || acquisition.startsAt <= now) &&
+      (!acquisition.endsAt || acquisition.endsAt > now);
+    if (!current) continue;
+
+    let supplierName: string | null = null;
+    if (acquisition.supplierId) {
+      const [supplier] = await db
+        .select({ name: hospitalCatalogueSuppliers.name })
+        .from(hospitalCatalogueSuppliers)
+        .where(eq(hospitalCatalogueSuppliers.id, acquisition.supplierId))
+        .limit(1);
+      supplierName = supplier?.name ?? null;
+    }
+
+    const routes = await db
+      .select()
+      .from(hospitalCatalogueAccessRoutes)
+      .where(eq(hospitalCatalogueAccessRoutes.acquisitionId, acquisition.id));
+
+    for (const route of routes) {
+      if (route.availabilityStatus !== "available" || !route.lastVerifiedAt) continue;
+      options.push({
+        acquisitionId: acquisition.id,
+        supplierName,
+        accessMode: acquisition.accessMode,
+        scopeType: acquisition.scopeType,
+        scopeKey: acquisition.scopeKey,
+        format: route.format,
+        routeType: route.routeType,
+        url: route.url,
+        requiresAuthentication: route.requiresAuthentication,
+        requiresLibraryCard: route.requiresLibraryCard,
+        drmProtected: route.drmProtected,
+        downloadAllowed: route.downloadAllowed,
+        offlineAllowed: route.offlineAllowed,
+        accessibleFormat: route.accessibleFormat,
+        accessibilityFeatures: route.accessibilityFeatures ?? [],
+        lastVerifiedAt: route.lastVerifiedAt,
+      });
+    }
+  }
+  return options;
 }
