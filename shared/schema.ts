@@ -436,3 +436,27 @@ export const hospitalKnowledgeSources = pgTable("hospital_knowledge_sources", {
 
 export type HospitalKnowledgeItem = typeof hospitalKnowledgeItems.$inferSelect;
 export type HospitalKnowledgeSource = typeof hospitalKnowledgeSources.$inferSelect;
+
+
+export const hospitalKnowledgeProviders = pgTable("hospital_knowledge_providers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code", { length: 64 }).notNull().unique(),
+  name: text("name").notNull(),
+  providerType: varchar("provider_type", { length: 40 }).notNull(),
+  websiteUrl: text("website_url"),
+  integrationStatus: varchar("integration_status", { length: 40 }).notNull().default("planned"),
+  supportsMetadata: boolean("supports_metadata").notNull().default(false),
+  supportsAbstracts: boolean("supports_abstracts").notNull().default(false),
+  supportsFullText: boolean("supports_full_text").notNull().default(false),
+  supportsCitationMetrics: boolean("supports_citation_metrics").notNull().default(false),
+  supportsNews: boolean("supports_news").notNull().default(false),
+  entitlementRequired: boolean("entitlement_required").notNull().default(false),
+  configurationNote: text("configuration_note"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  index("idx_hospital_knowledge_provider_type").on(table.providerType),
+  index("idx_hospital_knowledge_provider_status").on(table.integrationStatus),
+]);
+
+export type HospitalKnowledgeProvider = typeof hospitalKnowledgeProviders.$inferSelect;
