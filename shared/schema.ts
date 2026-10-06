@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, real, timestamp, jsonb, index, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, real, timestamp, jsonb, index, uniqueIndex, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -201,3 +201,56 @@ export const insertHospitalCatalogueItemSchema = createInsertSchema(hospitalCata
 
 export type HospitalCatalogueItem = typeof hospitalCatalogueItems.$inferSelect;
 export type InsertHospitalCatalogueItem = z.infer<typeof insertHospitalCatalogueItemSchema>;
+
+
+export const hospitalCatalogueSources = pgTable("hospital_catalogue_sources", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  catalogueItemId: varchar("catalogue_item_id").notNull().references(() => hospitalCatalogueItems.id, { onDelete: "cascade" }),
+  sourceProvider: varchar("source_provider", { length: 64 }).notNull(),
+  sourceId: text("source_id"),
+  sourceUrl: text("source_url").notNull(),
+  sourceCatalogueUrl: text("source_catalogue_url"),
+  rightsStatus: varchar("rights_status", { length: 40 }).notNull().default("needs_review"),
+  rightsJurisdiction: varchar("rights_jurisdiction", { length: 16 }).notNull().default("AU"),
+  rightsNote: text("rights_note"),
+  rightsVerifiedAt: timestamp("rights_verified_at"),
+  availabilityStatus: varchar("availability_status", { length: 40 }).notNull().default("metadata_only"),
+  formatUrls: jsonb("format_urls").$type<Record<string, string>>().default({}),
+  hasAudio: boolean("has_audio").notNull().default(false),
+  hasEbook: boolean("has_ebook").notNull().default(false),
+  hasHtml: boolean("has_html").notNull().default(false),
+  hasPlainText: boolean("has_plain_text").notNull().default(false),
+  hasPdf: boolean("has_pdf").notNull().default(false),
+  hasDaisy: boolean("has_daisy").notNull().default(false),
+  rawMetadata: jsonb("raw_metadata").$type<Record<string, unknown>>().default({}),
+  importedAt: timestamp("imported_at").notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("uniq_hospital_catalogue_source_url").on(table.sourceProvider, table.sourceUrl),
+  index("idx_hospital_catalogue_source_item").on(table.catalogueItemId),
+  index("idx_hospital_catalogue_source_provider").on(table.sourceProvider),
+  index("idx_hospital_catalogue_source_rights").on(table.rightsStatus),
+]);
+
+export const hospitalCatalogueIngestionRuns = pgTable("hospital_catalogue_ingestion_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sourceProvider: varchar("source_provider", { length: 64 }).notNull(),
+  trigger: varchar("trigger", { length: 32 }).notNull().default("manual"),
+  status: varchar("status", { length: 24 }).notNull().default("running"),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  finishedAt: timestamp("finished_at"),
+  fetchedCount: integer("fetched_count").notNull().default(0),
+  insertedCount: integer("inserted_count").notNull().default(0),
+  updatedCount: integer("updated_count").notNull().default(0),
+  skippedCount: integer("skipped_count").notNull().default(0),
+  errorCount: integer("error_count").notNull().default(0),
+  errors: jsonb("errors").$type<string[]>().default([]),
+  notes: text("notes"),
+}, (table) => [
+  index("idx_hospital_ingestion_source").on(table.sourceProvider),
+  index("idx_hospital_ingestion_started").on(table.startedAt),
+]);
+
+export type HospitalCatalogueSource = typeof hospitalCatalogueSources.$inferSelect;
+export type InsertHospitalCatalogueSource = typeof hospitalCatalogueSources.$inferInsert;
+export type HospitalCatalogueIngestionRun = typeof hospitalCatalogueIngestionRuns.$inferSelect;
