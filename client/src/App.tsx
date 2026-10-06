@@ -8,6 +8,7 @@ import { AccessiBooksLogo } from "@/components/accessibooks-logo";
 import { useAuth } from "@/hooks/useAuth";
 import { Library } from "@/pages/library";
 import { Player } from "@/pages/player";
+import { HospitalCatalogue } from "@/pages/hospital-catalogue";
 import { Book } from "@shared/schema";
 import { HeroSection } from "@/components/hero-section";
 import { SubjectChips } from "@/components/subject-chips";
@@ -34,7 +35,7 @@ import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle, Dialog
 import { AdminStoragePage } from "@/pages/admin-storage";
 import { AppLayout } from "@/components/app-layout";
 
-type View = "library" | "player";
+type View = "library" | "hospitals" | "player";
 
 // Header component with user management
 function AppHeader() {
@@ -666,7 +667,7 @@ function MainApp() {
   useEffect(() => {
     if (currentView === "library") {
       libraryFocusRef.current?.focus();
-    } else {
+    } else if (currentView === "player") {
       playerFocusRef.current?.focus();
     }
   }, [currentView]);
@@ -731,6 +732,15 @@ function MainApp() {
                 <span>Library</span>
               </div>
               <Library onSelectBook={handleSelectBook} />
+            </div>
+          ) : currentView === "hospitals" ? (
+            <div
+              id="hospitals-panel"
+              role="tabpanel"
+              aria-labelledby="hospitals-tab"
+              data-testid="panel-hospitals"
+            >
+              <HospitalCatalogue />
             </div>
           ) : (
             <div
