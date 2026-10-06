@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Book as BookIcon, Play } from "lucide-react";
+import { Book as BookIcon, Play, Hospital } from "lucide-react";
 import {
   SidebarProvider,
   Sidebar,
@@ -9,7 +9,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 
-export type AppView = "library" | "player";
+export type AppView = "library" | "hospitals" | "player";
 
 interface AppLayoutProps {
   currentView: AppView;
@@ -40,6 +40,18 @@ export function AppLayout({
             >
               <BookIcon className="h-5 w-5" aria-hidden="true" />
               <span>Library</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={currentView === "hospitals"}
+              onClick={() => onNavigate("hospitals")}
+              aria-current={currentView === "hospitals" ? "page" : undefined}
+              className="rounded-xl"
+              data-testid="tab-hospitals"
+            >
+              <Hospital className="h-5 w-5" aria-hidden="true" />
+              <span>Hospitals</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
