@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, real, timestamp, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, real, timestamp, jsonb, index, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -122,3 +122,82 @@ export interface Progress {
   currentTime: number;
   lastPlayed: string;
 }
+
+
+// AccessiBooks @ Hospitals catalogue.
+// This is deliberately separate from the playback-oriented `books` table so
+// discovery, licensing and accessibility metadata can evolve independently.
+export const hospitalCatalogueItems = pgTable("hospital_catalogue_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  slug: varchar("slug", { length: 180 }).notNull().unique(),
+  title: text("title").notNull(),
+  subtitle: text("subtitle"),
+  author: text("author").notNull(),
+  contributors: jsonb("contributors").$type<string[]>().default([]),
+  description: text("description"),
+  publicationYear: integer("publication_year"),
+  language: varchar("language", { length: 16 }).notNull().default("en"),
+  audience: varchar("audience", { length: 32 }).notNull().default("general"),
+  contentKind: varchar("content_kind", { length: 32 }).notNull().default("book"),
+  primaryCollection: varchar("primary_collection", { length: 64 }).notNull().default("general"),
+  genres: jsonb("genres").$type<string[]>().default([]),
+  subjects: jsonb("subjects").$type<string[]>().default([]),
+  hospitalTags: jsonb("hospital_tags").$type<string[]>().default([]),
+
+  sourceProvider: varchar("source_provider", { length: 64 }).notNull(),
+  sourceId: text("source_id"),
+  sourceUrl: text("source_url").notNull(),
+  coverImage: text("cover_image"),
+
+  rightsStatus: varchar("rights_status", { length: 40 }).notNull().default("needs_review"),
+  rightsJurisdiction: varchar("rights_jurisdiction", { length: 16 }).notNull().default("AU"),
+  rightsNote: text("rights_note"),
+  rightsVerifiedAt: timestamp("rights_verified_at"),
+
+  availabilityStatus: varchar("availability_status", { length: 40 }).notNull().default("metadata_only"),
+  availabilityNote: text("availability_note"),
+
+  hasAudio: boolean("has_audio").notNull().default(false),
+  hasEbook: boolean("has_ebook").notNull().default(false),
+  hasHtml: boolean("has_html").notNull().default(false),
+  hasPlainText: boolean("has_plain_text").notNull().default(false),
+  hasPdf: boolean("has_pdf").notNull().default(false),
+  hasDaisy: boolean("has_daisy").notNull().default(false),
+  hasLargePrint: boolean("has_large_print").notNull().default(false),
+  hasBraille: boolean("has_braille").notNull().default(false),
+  transcriptAvailable: boolean("transcript_available").notNull().default(false),
+  ttsFriendly: boolean("tts_friendly").notNull().default(false),
+
+  durationSeconds: integer("duration_seconds"),
+  estimatedReadingMinutes: integer("estimated_reading_minutes"),
+  isbn13: varchar("isbn13", { length: 20 }),
+
+  // Denormalised field for simple, portable PostgreSQL search. Importers should
+  // rebuild it whenever title/author/subject metadata changes.
+  searchText: text("search_text").notNull(),
+
+  // Clinical/patient-education material must never be implied to be reviewed
+  // merely because it appears in a hospital distribution.
+  clinicalInformation: boolean("clinical_information").notNull().default(false),
+  clinicalReviewStatus: varchar("clinical_review_status", { length: 40 }).notNull().default("not_applicable"),
+  clinicalReviewNote: text("clinical_review_note"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  index("idx_hospital_catalogue_title").on(table.title),
+  index("idx_hospital_catalogue_author").on(table.author),
+  index("idx_hospital_catalogue_collection").on(table.primaryCollection),
+  index("idx_hospital_catalogue_availability").on(table.availabilityStatus),
+  index("idx_hospital_catalogue_rights").on(table.rightsStatus),
+  index("idx_hospital_catalogue_source").on(table.sourceProvider),
+]);
+
+export const insertHospitalCatalogueItemSchema = createInsertSchema(hospitalCatalogueItems).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type HospitalCatalogueItem = typeof hospitalCatalogueItems.$inferSelect;
+export type InsertHospitalCatalogueItem = z.infer<typeof insertHospitalCatalogueItemSchema>;
