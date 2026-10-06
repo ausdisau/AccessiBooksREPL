@@ -460,3 +460,24 @@ export const hospitalKnowledgeProviders = pgTable("hospital_knowledge_providers"
 ]);
 
 export type HospitalKnowledgeProvider = typeof hospitalKnowledgeProviders.$inferSelect;
+
+
+export const hospitalKnowledgeEnrichmentRuns = pgTable("hospital_knowledge_enrichment_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  knowledgeItemId: varchar("knowledge_item_id").references(() => hospitalKnowledgeItems.id, { onDelete: "set null" }),
+  doi: varchar("doi", { length: 255 }).notNull(),
+  trigger: varchar("trigger", { length: 32 }).notNull().default("manual"),
+  status: varchar("status", { length: 32 }).notNull().default("running"),
+  requestedProviders: jsonb("requested_providers").$type<string[]>().default([]),
+  providerResults: jsonb("provider_results").$type<Record<string, unknown>>().default({}),
+  errors: jsonb("errors").$type<Record<string, string>>().default({}),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  finishedAt: timestamp("finished_at"),
+  createdBy: text("created_by"),
+}, (table) => [
+  index("idx_hospital_knowledge_enrichment_item").on(table.knowledgeItemId),
+  index("idx_hospital_knowledge_enrichment_doi").on(table.doi),
+  index("idx_hospital_knowledge_enrichment_started").on(table.startedAt),
+]);
+
+export type HospitalKnowledgeEnrichmentRun = typeof hospitalKnowledgeEnrichmentRuns.$inferSelect;
