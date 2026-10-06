@@ -481,3 +481,44 @@ export const hospitalKnowledgeEnrichmentRuns = pgTable("hospital_knowledge_enric
 ]);
 
 export type HospitalKnowledgeEnrichmentRun = typeof hospitalKnowledgeEnrichmentRuns.$inferSelect;
+
+
+export const accessibooksDistributions = pgTable("accessibooks_distributions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code", { length: 40 }).notNull().unique(),
+  name: text("name").notNull(),
+  status: varchar("status", { length: 32 }).notNull().default("prototype"),
+  audience: jsonb("audience").$type<string[]>().default([]),
+  collections: jsonb("collections").$type<string[]>().default([]),
+  formats: jsonb("formats").$type<string[]>().default([]),
+  policyProfile: jsonb("policy_profile").$type<Record<string, unknown>>().default({}),
+  branding: jsonb("branding").$type<Record<string, unknown>>().default({}),
+  publicPath: varchar("public_path", { length: 120 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  index("idx_accessibooks_distribution_status").on(table.status),
+]);
+
+export const accessibooksDistributionMemberships = pgTable("accessibooks_distribution_memberships", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  distributionId: varchar("distribution_id").notNull().references(() => accessibooksDistributions.id, { onDelete: "cascade" }),
+  catalogueItemId: varchar("catalogue_item_id").notNull().references(() => hospitalCatalogueItems.id, { onDelete: "cascade" }),
+  collection: varchar("collection", { length: 80 }).notNull().default("general"),
+  audience: varchar("audience", { length: 80 }).notNull().default("general"),
+  discoverabilityStatus: varchar("discoverability_status", { length: 32 }).notNull().default("visible"),
+  featured: boolean("featured").notNull().default(false),
+  sortRank: integer("sort_rank").notNull().default(0),
+  presentation: jsonb("presentation").$type<Record<string, unknown>>().default({}),
+  policyOverrides: jsonb("policy_overrides").$type<Record<string, unknown>>().default({}),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("uniq_accessibooks_distribution_item").on(table.distributionId, table.catalogueItemId),
+  index("idx_accessibooks_distribution_membership_distribution").on(table.distributionId),
+  index("idx_accessibooks_distribution_membership_collection").on(table.collection),
+  index("idx_accessibooks_distribution_membership_audience").on(table.audience),
+]);
+
+export type AccessiBooksDistribution = typeof accessibooksDistributions.$inferSelect;
+export type AccessiBooksDistributionMembership = typeof accessibooksDistributionMemberships.$inferSelect;
