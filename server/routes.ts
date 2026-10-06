@@ -13,6 +13,7 @@ import multer from "multer";
 import { db } from "./db";
 import { books } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { getHospitalCatalogueFacets, getHospitalCatalogueItem, searchHospitalCatalogue } from "./hospitalCatalogue";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
 
@@ -124,6 +125,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating preferences:", error);
       res.status(500).json({ message: "Failed to update preferences" });
+    }
+  });
+
+  // AccessiBooks @ Hospitals - searchable, rights-aware catalogue.
+  app.get("/api/hospitals/catalogue", async (req: Request, res: Response) => {
+    try {
+      const {
+        q,
+        audience,
+        collection,
+        language,
+        rightsStatus,
+        availabilityStatus,
+        format,
+        clinicalInformation,
+        sort,
+        limit,
+        offset,
+      } = req.query;
+
+      const parsedClinical =
+        clinicalInformation === "true"
+          ? true
+          : clinicalInformation === "false"
+            ? false
+            : undefined;
+
+      const items = await searchHospitalCatalogue({
+        q: typeof q === "string" ? q : undefined,
+        audience: typeof audience === "string" ? audience : undefined,
+        collection: typeof collection === "string" ? collection : undefined,
+        language: typeof language === "string" ? language : undefined,
+        rightsStatus: typeof rightsStatus === "string" ? rightsStatus : undefined,
+        availabilityStatus: typeof availabilityStatus === "string" ? availabilityStatus : undefined,
+        format: typeof format === "string" ? format as any : undefined,
+        clinicalInformation: parsedClinical,
+        sort: typeof sort === "string" ? sort as any : undefined,
+        limit: typeof limit === "string" ? Number(limit) : undefined,
+        offset: typeof offset === "string" ? Number(offset) : undefined,
+      });
+
+      res.json(items);
+    } catch (error) {
+      console.error("Hospital catalogue search failed:", error);
+      res.status(500).json({ message: "Failed to search hospital catalogue" });
+    }
+  });
+
+  app.get("/api/hospitals/catalogue/facets", async (_req: Request, res: Response) => {
+    try {
+      res.json(await getHospitalCatalogueFacets());
+    } catch (error) {
+      console.error("Hospital catalogue facets failed:", error);
+      res.status(500).json({ message: "Failed to load hospital catalogue filters" });
+    }
+  });
+
+  app.get("/api/hospitals/catalogue/:id", async (req: Request, res: Response) => {
+    try {
+      const item = await getHospitalCatalogueItem(req.params.id);
+      if (!item) return res.status(404).json({ message: "Catalogue item not found" });
+      res.json(item);
+    } catch (error) {
+      console.error("Hospital catalogue item failed:", error);
+      res.status(500).json({ message: "Failed to load hospital catalogue item" });
     }
   });
 
