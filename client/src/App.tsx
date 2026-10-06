@@ -10,6 +10,7 @@ import { Library } from "@/pages/library";
 import { Player } from "@/pages/player";
 import { HospitalCatalogue } from "@/pages/hospital-catalogue";
 import { DistributionPage } from "@/pages/distribution-page";
+import { DistributionHub } from "@/pages/distribution-hub";
 import type { DistributionId } from "@/lib/distributions";
 import { Book } from "@shared/schema";
 import { HeroSection } from "@/components/hero-section";
@@ -822,6 +823,25 @@ function App() {
 
   if (isLoading) {
     return <Loader variant="page" message="Loading AccessiBooks…" />;
+  }
+
+  if (pathname === "/distributions") {
+    return (
+      <MotionConfig reducedMotion={reduceMotion}>
+        <TooltipProvider>
+          <div className="min-h-screen bg-background text-foreground">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+              <header className="mb-8 flex items-center justify-between gap-4">
+                <AccessiBooksLogo asHeading={false} />
+                <AccessibilityControls />
+              </header>
+              <DistributionHub />
+            </div>
+          </div>
+          <Toaster />
+        </TooltipProvider>
+      </MotionConfig>
+    );
   }
 
   const publicDistribution =
