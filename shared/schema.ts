@@ -359,3 +359,80 @@ export const hospitalCatalogueAccessRoutes = pgTable("hospital_catalogue_access_
 export type HospitalCatalogueSupplier = typeof hospitalCatalogueSuppliers.$inferSelect;
 export type HospitalCatalogueAcquisition = typeof hospitalCatalogueAcquisitions.$inferSelect;
 export type HospitalCatalogueAccessRoute = typeof hospitalCatalogueAccessRoutes.$inferSelect;
+
+
+// AccessiBooks @ Hospitals research and current-awareness layer.
+// Kept separate from books so scholarly/news discovery, citation metrics and
+// licensed full text cannot be confused with book acquisition or patient advice.
+export const hospitalKnowledgeItems = pgTable("hospital_knowledge_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  kind: varchar("kind", { length: 32 }).notNull(), // scholarly_article, book_chapter, journal, news_article, magazine_article
+  title: text("title").notNull(),
+  subtitle: text("subtitle"),
+  abstract: text("abstract"),
+  authors: jsonb("authors").$type<string[]>().default([]),
+  publisher: text("publisher"),
+  containerTitle: text("container_title"),
+  publicationDate: timestamp("publication_date"),
+  language: varchar("language", { length: 16 }).default("en"),
+
+  doi: varchar("doi", { length: 255 }),
+  issn: varchar("issn", { length: 32 }),
+  isbn: varchar("isbn", { length: 20 }),
+  pmid: varchar("pmid", { length: 32 }),
+  sourceUrl: text("source_url").notNull(),
+  canonicalUrl: text("canonical_url"),
+
+  sourceProvider: varchar("source_provider", { length: 64 }).notNull(),
+  sourceRecordId: text("source_record_id"),
+  sourceMetadata: jsonb("source_metadata").$type<Record<string, unknown>>().default({}),
+
+  openAccess: boolean("open_access").notNull().default(false),
+  fullTextStatus: varchar("full_text_status", { length: 40 }).notNull().default("metadata_only"),
+  fullTextFormat: varchar("full_text_format", { length: 32 }),
+  entitlementStatus: varchar("entitlement_status", { length: 40 }).notNull().default("not_verified"),
+  licenceStatus: varchar("licence_status", { length: 40 }).notNull().default("not_verified"),
+  rightsNote: text("rights_note"),
+
+  citationCount: integer("citation_count"),
+  journalImpactFactor: real("journal_impact_factor"),
+  metricsSource: varchar("metrics_source", { length: 64 }),
+  metricsVerifiedAt: timestamp("metrics_verified_at"),
+
+  // Clinical/research records are not patient education by default.
+  audience: varchar("audience", { length: 32 }).notNull().default("staff_research"),
+  patientFacing: boolean("patient_facing").notNull().default(false),
+  clinicalUseStatus: varchar("clinical_use_status", { length: 40 }).notNull().default("research_reference_only"),
+  clinicalReviewStatus: varchar("clinical_review_status", { length: 40 }).notNull().default("not_reviewed"),
+
+  searchText: text("search_text").notNull(),
+  importedAt: timestamp("imported_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  index("idx_hospital_knowledge_kind").on(table.kind),
+  index("idx_hospital_knowledge_doi").on(table.doi),
+  index("idx_hospital_knowledge_source").on(table.sourceProvider),
+  index("idx_hospital_knowledge_date").on(table.publicationDate),
+  index("idx_hospital_knowledge_patient").on(table.patientFacing),
+]);
+
+export const hospitalKnowledgeSources = pgTable("hospital_knowledge_sources", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  knowledgeItemId: varchar("knowledge_item_id").notNull().references(() => hospitalKnowledgeItems.id, { onDelete: "cascade" }),
+  provider: varchar("provider", { length: 64 }).notNull(),
+  providerRecordId: text("provider_record_id"),
+  url: text("url").notNull(),
+  role: varchar("role", { length: 40 }).notNull().default("metadata"), // metadata, full_text, metrics, news
+  accessStatus: varchar("access_status", { length: 40 }).notNull().default("metadata_only"),
+  entitlementRequired: boolean("entitlement_required").notNull().default(false),
+  rawMetadata: jsonb("raw_metadata").$type<Record<string, unknown>>().default({}),
+  lastVerifiedAt: timestamp("last_verified_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("uniq_hospital_knowledge_source").on(table.provider, table.url),
+  index("idx_hospital_knowledge_source_item").on(table.knowledgeItemId),
+  index("idx_hospital_knowledge_source_role").on(table.role),
+]);
+
+export type HospitalKnowledgeItem = typeof hospitalKnowledgeItems.$inferSelect;
+export type HospitalKnowledgeSource = typeof hospitalKnowledgeSources.$inferSelect;
