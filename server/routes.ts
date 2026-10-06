@@ -28,6 +28,7 @@ import { getSpringerNatureFullTextJatsByDoi, getSpringerNatureMetaByDoi, isSprin
 import { listHospitalKnowledgeProviders } from "./hospitalKnowledgeProviders";
 import { getHospitalKnowledgeItem, importCrossrefDoi } from "./hospitalKnowledge";
 import { crossrefStatus, getCrossrefWork, searchCrossrefWorks } from "./crossref";
+import { addCatalogueItemToDistribution, getAccessiBooksDistribution, listAccessiBooksDistributions, searchDistributionCatalogue } from "./distributions";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
 
@@ -846,6 +847,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(await listHospitalKnowledgeSources(req.params.id));
     } catch (error) {
       res.status(500).json({ message: "Failed to load knowledge provenance" });
+    }
+  });
+
+  // AccessiBooks multi-distribution platform.
+  app.get("/api/distributions", async (_req: Request, res: Response) => {
+    try {
+      res.json(await listAccessiBooksDistributions());
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load AccessiBooks distributions" });
+    }
+  });
+
+  app.get("/api/distributions/:code", async (req: Request, res: Response) => {
+    try {
+      const distribution = await getAccessiBooksDistribution(req.params.code);
+      if (!distribution) return res.status(404).json({ message: "Distribution not found" });
+      res.json(distribution);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load distribution" });
+    }
+  });
+
+  app.get("/api/distributions/:code/catalogue", async (req: Request, res: Response) => {
+    try {
+      res.json(await searchDistributionCatalogue({
+        distributionCode: req.params.code,
+        q: typeof req.query.q === "string" ? req.query.q : undefined,
+        collection: typeof req.query.collection === "string" ? req.query.collection : undefined,
+        audience: typeof req.query.audience === "string" ? req.query.audience : undefined,
+        limit: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to search distribution catalogue";
+      res.status(message.includes("Unknown AccessiBooks distribution") ? 404 : 500).json({ message });
+    }
+  });
+
+  app.post("/api/distributions/:code/catalogue/:itemId", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.status(201).json(await addCatalogueItemToDistribution({
+        distributionCode: req.params.code,
+        catalogueItemId: req.params.itemId,
+        collection: typeof req.body?.collection === "string" ? req.body.collection : undefined,
+        audience: typeof req.body?.audience === "string" ? req.body.audience : undefined,
+        featured: typeof req.body?.featured === "boolean" ? req.body.featured : undefined,
+        sortRank: typeof req.body?.sortRank === "number" ? req.body.sortRank : undefined,
+        presentation: req.body?.presentation && typeof req.body.presentation === "object" ? req.body.presentation : undefined,
+        policyOverrides: req.body?.policyOverrides && typeof req.body.policyOverrides === "object" ? req.body.policyOverrides : undefined,
+      }));
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : "Failed to add catalogue item" });
     }
   });
 
