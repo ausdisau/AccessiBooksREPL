@@ -9,6 +9,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { Library } from "@/pages/library";
 import { Player } from "@/pages/player";
 import { HospitalCatalogue } from "@/pages/hospital-catalogue";
+import { DistributionPage } from "@/pages/distribution-page";
+import type { DistributionId } from "@/lib/distributions";
 import { Book } from "@shared/schema";
 import { HeroSection } from "@/components/hero-section";
 import { SubjectChips } from "@/components/subject-chips";
@@ -35,7 +37,7 @@ import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle, Dialog
 import { AdminStoragePage } from "@/pages/admin-storage";
 import { AppLayout } from "@/components/app-layout";
 
-type View = "library" | "hospitals" | "player";
+type View = "library" | "hospitals" | "educate" | "libraries" | "community" | "kids" | "player";
 
 // Header component with user management
 function AppHeader() {
@@ -656,8 +658,27 @@ function LandingPage() {
   );
 }
 
+function viewFromPath(pathname: string): View {
+  if (pathname === "/hospitals") return "hospitals";
+  if (pathname === "/educate") return "educate";
+  if (pathname === "/libraries") return "libraries";
+  if (pathname === "/community") return "community";
+  if (pathname === "/kids") return "kids";
+  return "library";
+}
+
+function pathForView(view: View): string {
+  if (view === "hospitals") return "/hospitals";
+  if (view === "educate") return "/educate";
+  if (view === "libraries") return "/libraries";
+  if (view === "community") return "/community";
+  if (view === "kids") return "/kids";
+  return "/";
+}
+
 function MainApp() {
-  const [currentView, setCurrentView] = useState<View>("library");
+  const initialPath = typeof window !== "undefined" ? window.location.pathname : "/";
+  const [currentView, setCurrentView] = useState<View>(viewFromPath(initialPath));
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const libraryFocusRef = useRef<HTMLDivElement>(null);
   const playerFocusRef = useRef<HTMLDivElement>(null);
@@ -671,6 +692,13 @@ function MainApp() {
       playerFocusRef.current?.focus();
     }
   }, [currentView]);
+
+  const handleNavigate = (view: View) => {
+    setCurrentView(view);
+    if (view !== "player" && typeof window !== "undefined") {
+      window.history.pushState({}, "", pathForView(view));
+    }
+  };
 
   const handleSelectBook = (book: Book) => {
     setSelectedBook(book);
@@ -713,7 +741,7 @@ function MainApp() {
 
       <AppLayout
         currentView={currentView}
-        onNavigate={(view) => setCurrentView(view)}
+        onNavigate={handleNavigate}
         hasCurrentBook={!!(selectedBook || currentBook)}
         header={<AppHeader />}
       >
@@ -741,6 +769,15 @@ function MainApp() {
               data-testid="panel-hospitals"
             >
               <HospitalCatalogue />
+            </div>
+          ) : currentView === "educate" || currentView === "libraries" || currentView === "community" || currentView === "kids" ? (
+            <div
+              id={currentView + "-panel"}
+              role="tabpanel"
+              aria-labelledby={currentView + "-tab"}
+              data-testid={"panel-" + currentView}
+            >
+              <DistributionPage distributionId={currentView as DistributionId} />
             </div>
           ) : (
             <div
@@ -771,6 +808,30 @@ function App() {
 
   if (isLoading) {
     return <Loader variant="page" message="Loading AccessiBooks…" />;
+  }
+
+  const publicDistribution =
+    pathname === "/educate" || pathname === "/libraries" || pathname === "/community" || pathname === "/kids"
+      ? (pathname.slice(1) as DistributionId)
+      : null;
+
+  if (!isAuthenticated && publicDistribution) {
+    return (
+      <MotionConfig reducedMotion={reduceMotion}>
+        <TooltipProvider>
+          <div className="min-h-screen bg-background text-foreground">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+              <header className="mb-8 flex items-center justify-between gap-4">
+                <AccessiBooksLogo asHeading={false} />
+                <AccessibilityControls />
+              </header>
+              <DistributionPage distributionId={publicDistribution} />
+            </div>
+          </div>
+          <Toaster />
+        </TooltipProvider>
+      </MotionConfig>
+    );
   }
 
   if (isAuthenticated && (pathname === "/admin" || pathname === "/admin/storage")) {
