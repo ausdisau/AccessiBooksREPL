@@ -17,6 +17,7 @@ import { getHospitalCatalogueFacets, getHospitalCatalogueItem, searchHospitalCat
 import { isWorldCatConfigured, lookupAustralianWorldCatHoldingsByIsbn, lookupWorldCatByIsbn, worldCatStatus } from "./worldcat";
 import { importWorldCatIsbn } from "./worldcatCatalogue";
 import { createHospitalCatalogueAcquisition, createHospitalCatalogueAccessRoute, ensureHospitalCatalogueSuppliersSeeded, getHospitalCatalogueAcquisitions, getPublicHospitalCatalogueAccessOptions, listHospitalCatalogueSuppliers, updateHospitalCatalogueAcquisition, updateHospitalCatalogueAccessRoute } from "./hospitalCatalogueAcquisitions";
+import { ebscoStatus, getEbscoProfileInfo, isEbscoConfigured, retrieveEbscoRecord, searchEbsco, searchEbscoByIsbn, summariseEbscoFullText } from "./ebsco";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
 
@@ -389,6 +390,160 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Update hospital access route failed:", error);
       res.status(400).json({ message: error instanceof Error ? error.message : "Failed to update access route" });
+    }
+  });
+
+  // EBSCO Discovery Service integration.
+  // Institution-scoped discovery only: catalogue metadata or full-text indicators do not
+  // become a patient-facing AccessiBooks entitlement without a verified acquisition route.
+  app.get("/api/hospitals/ebsco/status", requireAdmin, async (_req: Request, res: Response) => {
+    res.json(ebscoStatus());
+  });
+
+  app.get("/api/hospitals/ebsco/info", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      if (!isEbscoConfigured()) {
+        return res.status(503).json({
+          message: "EBSCO EDS integration is not configured",
+          requiredEnvironment: [
+            "EBSCO_EDS_USER_ID",
+            "EBSCO_EDS_PASSWORD",
+            "EBSCO_EDS_PROFILE",
+          ],
+          optionalEnvironment: [
+            "EBSCO_EDS_API_KEY",
+            "EBSCO_EDS_INTERFACE_ID",
+            "EBSCO_EDS_ORG",
+          ],
+        });
+      }
+      res.json(await getEbscoProfileInfo());
+    } catch (error) {
+      console.error("EBSCO profile info failed:", error);
+      res.status(502).json({
+        message: "EBSCO profile info failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/hospitals/ebsco/search", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isEbscoConfigured()) {
+        return res.status(503).json({ message: "EBSCO EDS integration is not configured" });
+      }
+      const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+      if (!q) return res.status(400).json({ message: "q is required" });
+
+      const resultsPerPage =
+        typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+      const pageNumber =
+        typeof req.query.page === "string" ? Number(req.query.page) : undefined;
+      const guest = req.query.guest === "true";
+
+      res.json(await searchEbsco({
+        query: q,
+        resultsPerPage,
+        pageNumber,
+        sort: typeof req.query.sort === "string" ? req.query.sort : undefined,
+        view: req.query.view === "title" || req.query.view === "brief" || req.query.view === "detailed"
+          ? req.query.view
+          : "detailed",
+        includeFacets: req.query.facets !== "false",
+        guest,
+      }));
+    } catch (error) {
+      console.error("EBSCO search failed:", error);
+      res.status(502).json({
+        message: "EBSCO search failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/hospitals/ebsco/isbn/:isbn", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isEbscoConfigured()) {
+        return res.status(503).json({ message: "EBSCO EDS integration is not configured" });
+      }
+      res.json(await searchEbscoByIsbn(req.params.isbn, {
+        resultsPerPage: 20,
+        view: "detailed",
+        includeFacets: true,
+        guest: req.query.guest === "true",
+      }));
+    } catch (error) {
+      console.error("EBSCO ISBN search failed:", error);
+      res.status(502).json({
+        message: "EBSCO ISBN search failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/hospitals/catalogue/:id/ebsco/discover", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isEbscoConfigured()) {
+        return res.status(503).json({ message: "EBSCO EDS integration is not configured" });
+      }
+      const item = await getHospitalCatalogueItem(req.params.id);
+      if (!item) return res.status(404).json({ message: "Catalogue item not found" });
+      const isbn = item.isbn13 || item.isbn10;
+      if (!isbn) {
+        return res.status(400).json({
+          message: "Catalogue item requires an ISBN before EBSCO discovery",
+        });
+      }
+      res.json({
+        catalogueItemId: item.id,
+        isbn,
+        result: await searchEbscoByIsbn(isbn, {
+          resultsPerPage: 20,
+          view: "detailed",
+          includeFacets: true,
+        }),
+        entitlementStatus: "not_recorded",
+        note:
+          "EDS search results are institution-scoped discovery. Review the selected record and licence/access route before exposing it to patients.",
+      });
+    } catch (error) {
+      console.error("EBSCO catalogue discovery failed:", error);
+      res.status(502).json({
+        message: "EBSCO catalogue discovery failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/hospitals/ebsco/retrieve", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isEbscoConfigured()) {
+        return res.status(503).json({ message: "EBSCO EDS integration is not configured" });
+      }
+      const dbId = typeof req.body?.dbId === "string" ? req.body.dbId : "";
+      const an = typeof req.body?.an === "string" ? req.body.an : "";
+      if (!dbId || !an) {
+        return res.status(400).json({ message: "dbId and an are required" });
+      }
+      const record = await retrieveEbscoRecord({
+        dbId,
+        an,
+        ebookPreferredFormat:
+          typeof req.body?.ebookPreferredFormat === "string"
+            ? req.body.ebookPreferredFormat
+            : undefined,
+        guest: req.body?.guest === true,
+      });
+      res.json({
+        record,
+        fullText: summariseEbscoFullText(record),
+      });
+    } catch (error) {
+      console.error("EBSCO retrieve failed:", error);
+      res.status(502).json({
+        message: "EBSCO retrieve failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
     }
   });
 
