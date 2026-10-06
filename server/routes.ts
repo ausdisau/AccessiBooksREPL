@@ -16,6 +16,7 @@ import { eq } from "drizzle-orm";
 import { getHospitalCatalogueFacets, getHospitalCatalogueItem, searchHospitalCatalogue } from "./hospitalCatalogue";
 import { isWorldCatConfigured, lookupAustralianWorldCatHoldingsByIsbn, lookupWorldCatByIsbn, worldCatStatus } from "./worldcat";
 import { importWorldCatIsbn } from "./worldcatCatalogue";
+import { createHospitalCatalogueAcquisition, createHospitalCatalogueAccessRoute, ensureHospitalCatalogueSuppliersSeeded, getHospitalCatalogueAcquisitions, getPublicHospitalCatalogueAccessOptions, listHospitalCatalogueSuppliers, updateHospitalCatalogueAcquisition, updateHospitalCatalogueAccessRoute } from "./hospitalCatalogueAcquisitions";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
 
@@ -253,6 +254,141 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: "WorldCat catalogue import failed",
         detail: error instanceof Error ? error.message : String(error),
       });
+    }
+  });
+
+  // Commercial acquisition and lawful access management.
+  app.get("/api/hospitals/catalogue/suppliers", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      res.json(await listHospitalCatalogueSuppliers());
+    } catch (error) {
+      console.error("Hospital suppliers failed:", error);
+      res.status(500).json({ message: "Failed to load catalogue suppliers" });
+    }
+  });
+
+  app.get("/api/hospitals/catalogue/:id/acquisitions", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await getHospitalCatalogueAcquisitions(req.params.id));
+    } catch (error) {
+      console.error("Hospital acquisitions failed:", error);
+      res.status(500).json({ message: "Failed to load catalogue acquisitions" });
+    }
+  });
+
+  app.get("/api/hospitals/catalogue/:id/access-options", async (req: Request, res: Response) => {
+    try {
+      res.json(await getPublicHospitalCatalogueAccessOptions(req.params.id));
+    } catch (error) {
+      console.error("Hospital access options failed:", error);
+      res.status(500).json({ message: "Failed to load access options" });
+    }
+  });
+
+  app.post("/api/hospitals/catalogue/:id/acquisitions", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const body = req.body ?? {};
+      const acquisition = await createHospitalCatalogueAcquisition({
+        catalogueItemId: req.params.id,
+        supplierCode: typeof body.supplierCode === "string" ? body.supplierCode : undefined,
+        supplierTitleId: typeof body.supplierTitleId === "string" ? body.supplierTitleId : null,
+        supplierUrl: typeof body.supplierUrl === "string" ? body.supplierUrl : null,
+        scopeType: typeof body.scopeType === "string" ? body.scopeType : undefined,
+        scopeKey: typeof body.scopeKey === "string" ? body.scopeKey : undefined,
+        acquisitionStatus: typeof body.acquisitionStatus === "string" ? body.acquisitionStatus : undefined,
+        licenceModel: typeof body.licenceModel === "string" ? body.licenceModel : undefined,
+        accessMode: typeof body.accessMode === "string" ? body.accessMode : undefined,
+        territory: typeof body.territory === "string" ? body.territory : undefined,
+        formats: Array.isArray(body.formats) ? body.formats.filter((v: unknown) => typeof v === "string") : undefined,
+        accessibilityFeatures: Array.isArray(body.accessibilityFeatures) ? body.accessibilityFeatures.filter((v: unknown) => typeof v === "string") : undefined,
+        copiesOrSeats: typeof body.copiesOrSeats === "number" ? body.copiesOrSeats : null,
+        concurrentUsers: typeof body.concurrentUsers === "number" ? body.concurrentUsers : null,
+        loanPeriodDays: typeof body.loanPeriodDays === "number" ? body.loanPeriodDays : null,
+        agreementReference: typeof body.agreementReference === "string" ? body.agreementReference : null,
+        rightsBasis: typeof body.rightsBasis === "string" ? body.rightsBasis : undefined,
+        rightsNote: typeof body.rightsNote === "string" ? body.rightsNote : null,
+        termsUrl: typeof body.termsUrl === "string" ? body.termsUrl : null,
+        startsAt: typeof body.startsAt === "string" ? new Date(body.startsAt) : null,
+        endsAt: typeof body.endsAt === "string" ? new Date(body.endsAt) : null,
+        verifiedAt: typeof body.verifiedAt === "string" ? new Date(body.verifiedAt) : null,
+        verifiedBy: typeof body.verifiedBy === "string" ? body.verifiedBy : null,
+      });
+      res.status(201).json(acquisition);
+    } catch (error) {
+      console.error("Create hospital acquisition failed:", error);
+      res.status(400).json({ message: error instanceof Error ? error.message : "Failed to create acquisition" });
+    }
+  });
+
+  app.patch("/api/hospitals/acquisitions/:id", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const body = req.body ?? {};
+      const patch: any = {};
+      const stringFields = ["supplierCode", "supplierTitleId", "supplierUrl", "scopeType", "scopeKey", "acquisitionStatus", "licenceModel", "accessMode", "territory", "agreementReference", "rightsBasis", "rightsNote", "termsUrl", "verifiedBy"];
+      for (const field of stringFields) {
+        if (typeof body[field] === "string" || body[field] === null) patch[field] = body[field];
+      }
+      if (Array.isArray(body.formats)) patch.formats = body.formats.filter((v: unknown) => typeof v === "string");
+      if (Array.isArray(body.accessibilityFeatures)) patch.accessibilityFeatures = body.accessibilityFeatures.filter((v: unknown) => typeof v === "string");
+      for (const field of ["copiesOrSeats", "concurrentUsers", "loanPeriodDays"]) {
+        if (typeof body[field] === "number" || body[field] === null) patch[field] = body[field];
+      }
+      for (const field of ["startsAt", "endsAt", "verifiedAt"]) {
+        if (typeof body[field] === "string") patch[field] = new Date(body[field]);
+        if (body[field] === null) patch[field] = null;
+      }
+      res.json(await updateHospitalCatalogueAcquisition(req.params.id, patch));
+    } catch (error) {
+      console.error("Update hospital acquisition failed:", error);
+      res.status(400).json({ message: error instanceof Error ? error.message : "Failed to update acquisition" });
+    }
+  });
+
+  app.post("/api/hospitals/acquisitions/:id/routes", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const body = req.body ?? {};
+      if (typeof body.format !== "string") return res.status(400).json({ message: "format is required" });
+      const route = await createHospitalCatalogueAccessRoute({
+        acquisitionId: req.params.id,
+        format: body.format,
+        routeType: typeof body.routeType === "string" ? body.routeType : undefined,
+        url: typeof body.url === "string" ? body.url : null,
+        requiresAuthentication: typeof body.requiresAuthentication === "boolean" ? body.requiresAuthentication : undefined,
+        requiresLibraryCard: typeof body.requiresLibraryCard === "boolean" ? body.requiresLibraryCard : undefined,
+        drmProtected: typeof body.drmProtected === "boolean" ? body.drmProtected : undefined,
+        downloadAllowed: typeof body.downloadAllowed === "boolean" ? body.downloadAllowed : undefined,
+        offlineAllowed: typeof body.offlineAllowed === "boolean" ? body.offlineAllowed : undefined,
+        accessibleFormat: typeof body.accessibleFormat === "boolean" ? body.accessibleFormat : undefined,
+        accessibilityFeatures: Array.isArray(body.accessibilityFeatures) ? body.accessibilityFeatures.filter((v: unknown) => typeof v === "string") : undefined,
+        availabilityStatus: typeof body.availabilityStatus === "string" ? body.availabilityStatus : undefined,
+        lastVerifiedAt: typeof body.lastVerifiedAt === "string" ? new Date(body.lastVerifiedAt) : null,
+      });
+      res.status(201).json(route);
+    } catch (error) {
+      console.error("Create hospital access route failed:", error);
+      res.status(400).json({ message: error instanceof Error ? error.message : "Failed to create access route" });
+    }
+  });
+
+  app.patch("/api/hospitals/access-routes/:id", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const body = req.body ?? {};
+      const patch: any = {};
+      const stringFields = ["format", "routeType", "url", "availabilityStatus"];
+      for (const field of stringFields) {
+        if (typeof body[field] === "string" || body[field] === null) patch[field] = body[field];
+      }
+      const boolFields = ["requiresAuthentication", "requiresLibraryCard", "drmProtected", "downloadAllowed", "offlineAllowed", "accessibleFormat"];
+      for (const field of boolFields) {
+        if (typeof body[field] === "boolean") patch[field] = body[field];
+      }
+      if (Array.isArray(body.accessibilityFeatures)) patch.accessibilityFeatures = body.accessibilityFeatures.filter((v: unknown) => typeof v === "string");
+      if (typeof body.lastVerifiedAt === "string") patch.lastVerifiedAt = new Date(body.lastVerifiedAt);
+      if (body.lastVerifiedAt === null) patch.lastVerifiedAt = null;
+      res.json(await updateHospitalCatalogueAccessRoute(req.params.id, patch));
+    } catch (error) {
+      console.error("Update hospital access route failed:", error);
+      res.status(400).json({ message: error instanceof Error ? error.message : "Failed to update access route" });
     }
   });
 
