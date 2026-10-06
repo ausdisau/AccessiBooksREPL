@@ -18,6 +18,15 @@ import { isWorldCatConfigured, lookupAustralianWorldCatHoldingsByIsbn, lookupWor
 import { importWorldCatIsbn } from "./worldcatCatalogue";
 import { createHospitalCatalogueAcquisition, createHospitalCatalogueAccessRoute, ensureHospitalCatalogueSuppliersSeeded, getHospitalCatalogueAcquisitions, getPublicHospitalCatalogueAccessOptions, listHospitalCatalogueSuppliers, updateHospitalCatalogueAcquisition, updateHospitalCatalogueAccessRoute } from "./hospitalCatalogueAcquisitions";
 import { ebscoStatus, getEbscoProfileInfo, isEbscoConfigured, retrieveEbscoRecord, searchEbsco, searchEbscoByIsbn, summariseEbscoFullText } from "./ebsco";
+import { discoverVitalSourceCandidate } from "./vitalsourceCatalogue";
+import { getVitalSourceProduct, isVitalSourceConfigured, vitalSourceStatus } from "./vitalsource";
+import { getNewsApiSources, isNewsApiConfigured, newsApiStatus, searchNewsApi } from "./newsApi";
+import { getScienceDirectArticleByDoi, isScienceDirectConfigured, scienceDirectStatus, searchScienceDirect } from "./scienceDirect";
+import { getWebOfScienceDocument, getWebOfScienceJournalByIssn, getWebOfScienceJournalReport, searchWebOfScienceDocuments, webOfScienceStatus } from "./webOfScience";
+import { getSpringerNatureFullTextJatsByDoi, getSpringerNatureMetaByDoi, isSpringerNatureConfigured, searchSpringerNatureMeta, springerNatureStatus } from "./springerNature";
+import { listHospitalKnowledgeProviders } from "./hospitalKnowledgeProviders";
+import { getHospitalKnowledgeItem, importCrossrefDoi } from "./hospitalKnowledge";
+import { crossrefStatus, getCrossrefWork, searchCrossrefWorks } from "./crossref";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
 
@@ -544,6 +553,233 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: "EBSCO retrieve failed",
         detail: error instanceof Error ? error.message : String(error),
       });
+    }
+  });
+
+  // Research, scholarly literature and current-awareness stack.
+  app.get("/api/hospitals/knowledge/providers", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      res.json(await listHospitalKnowledgeProviders());
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load knowledge providers" });
+    }
+  });
+
+  app.get("/api/hospitals/research/status", requireAdmin, async (_req: Request, res: Response) => {
+    res.json({
+      crossref: crossrefStatus(),
+      springerNature: springerNatureStatus(),
+      webOfScience: webOfScienceStatus(),
+      scienceDirect: scienceDirectStatus(),
+      newsApi: newsApiStatus(),
+      lexisNexis: {
+        configured: false,
+        status: "partnership_required",
+        note: "Nexis Data as a Service endpoints and datasets are provisioned through the licensed developer portal.",
+      },
+    });
+  });
+
+  app.get("/api/hospitals/research/crossref/doi/:doi", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await getCrossrefWork(req.params.doi));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Crossref DOI lookup failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/crossref/search", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await searchCrossrefWorks({
+        query: typeof req.query.q === "string" ? req.query.q : undefined,
+        title: typeof req.query.title === "string" ? req.query.title : undefined,
+        author: typeof req.query.author === "string" ? req.query.author : undefined,
+        rows: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+        offset: typeof req.query.offset === "string" ? Number(req.query.offset) : undefined,
+        fromPublishedDate: typeof req.query.from === "string" ? req.query.from : undefined,
+        untilPublishedDate: typeof req.query.to === "string" ? req.query.to : undefined,
+      }));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Crossref search failed" });
+    }
+  });
+
+  app.post("/api/hospitals/knowledge/crossref/import-doi", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const doi = typeof req.body?.doi === "string" ? req.body.doi : "";
+      if (!doi) return res.status(400).json({ message: "doi is required" });
+      res.status(201).json(await importCrossrefDoi(doi));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Crossref import failed" });
+    }
+  });
+
+  app.get("/api/hospitals/knowledge/:id", requireAdmin, async (req: Request, res: Response) => {
+    const item = await getHospitalKnowledgeItem(req.params.id);
+    if (!item) return res.status(404).json({ message: "Knowledge item not found" });
+    res.json(item);
+  });
+
+  app.get("/api/hospitals/research/springer/search", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isSpringerNatureConfigured()) return res.status(503).json({ message: "Springer Nature integration is not configured" });
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      if (!q) return res.status(400).json({ message: "q is required" });
+      res.json(await searchSpringerNatureMeta({
+        q,
+        start: typeof req.query.start === "string" ? Number(req.query.start) : undefined,
+        pageSize: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+      }));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Springer Nature search failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/springer/doi/:doi", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isSpringerNatureConfigured()) return res.status(503).json({ message: "Springer Nature integration is not configured" });
+      res.json(await getSpringerNatureMetaByDoi(req.params.doi));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Springer Nature DOI lookup failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/springer/doi/:doi/fulltext-jats", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isSpringerNatureConfigured()) return res.status(503).json({ message: "Springer Nature integration is not configured" });
+      const xml = await getSpringerNatureFullTextJatsByDoi(req.params.doi);
+      res.type("application/xml").send(xml);
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Springer Nature full-text retrieval failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/wos/search", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      if (!q) return res.status(400).json({ message: "q is required" });
+      res.json(await searchWebOfScienceDocuments({
+        q,
+        db: typeof req.query.db === "string" ? req.query.db : undefined,
+        limit: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+        page: typeof req.query.page === "string" ? Number(req.query.page) : undefined,
+        detail: req.query.detail === "short" ? "short" : "full",
+      }));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Web of Science search failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/wos/documents/:uid", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await getWebOfScienceDocument(req.params.uid, req.query.detail === "short" ? "short" : "full"));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Web of Science document lookup failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/wos/journals", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const issn = typeof req.query.issn === "string" ? req.query.issn : "";
+      if (!issn) return res.status(400).json({ message: "issn is required" });
+      res.json(await getWebOfScienceJournalByIssn(issn));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Web of Science journal lookup failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/wos/journals/:id/reports/:year", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await getWebOfScienceJournalReport(req.params.id, Number(req.params.year)));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Web of Science journal report failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/sciencedirect/search", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isScienceDirectConfigured()) return res.status(503).json({ message: "ScienceDirect integration is not configured" });
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      if (!q) return res.status(400).json({ message: "q is required" });
+      res.json(await searchScienceDirect({
+        query: q,
+        count: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+        start: typeof req.query.start === "string" ? Number(req.query.start) : undefined,
+      }));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "ScienceDirect search failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/sciencedirect/doi/:doi", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isScienceDirectConfigured()) return res.status(503).json({ message: "ScienceDirect integration is not configured" });
+      const accept = req.query.format === "xml" ? "text/xml" : req.query.format === "text" ? "text/plain" : "application/json";
+      const result = await getScienceDirectArticleByDoi({
+        doi: req.params.doi,
+        view: req.query.view === "FULL" || req.query.view === "META_ABS" ? req.query.view : "META_ABS",
+        accept,
+      });
+      if (typeof result === "string") return res.type(accept).send(result);
+      res.json(result);
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "ScienceDirect DOI retrieval failed" });
+    }
+  });
+
+  app.get("/api/hospitals/news/search", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isNewsApiConfigured()) return res.status(503).json({ message: "News API is not configured" });
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      if (!q) return res.status(400).json({ message: "q is required" });
+      res.json(await searchNewsApi({
+        q,
+        from: typeof req.query.from === "string" ? req.query.from : undefined,
+        to: typeof req.query.to === "string" ? req.query.to : undefined,
+        language: typeof req.query.language === "string" ? req.query.language : undefined,
+        sortBy: req.query.sort === "relevancy" || req.query.sort === "popularity" ? req.query.sort : "publishedAt",
+        pageSize: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+        page: typeof req.query.page === "string" ? Number(req.query.page) : undefined,
+        domains: typeof req.query.domains === "string" ? req.query.domains : undefined,
+      }));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "News API search failed" });
+    }
+  });
+
+  app.get("/api/hospitals/news/sources", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isNewsApiConfigured()) return res.status(503).json({ message: "News API is not configured" });
+      res.json(await getNewsApiSources({
+        country: typeof req.query.country === "string" ? req.query.country : undefined,
+        category: typeof req.query.category === "string" ? req.query.category : undefined,
+        language: typeof req.query.language === "string" ? req.query.language : undefined,
+      }));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "News API sources failed" });
+    }
+  });
+
+  // VitalSource commercial ebook discovery remains separate from activation.
+  app.get("/api/hospitals/vitalsource/status", requireAdmin, async (_req: Request, res: Response) => {
+    res.json(vitalSourceStatus());
+  });
+
+  app.get("/api/hospitals/vitalsource/products/:identifier", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isVitalSourceConfigured()) return res.status(503).json({ message: "VitalSource integration is not configured" });
+      res.json(await getVitalSourceProduct(req.params.identifier));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "VitalSource lookup failed" });
+    }
+  });
+
+  app.post("/api/hospitals/catalogue/:id/vitalsource/discover", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isVitalSourceConfigured()) return res.status(503).json({ message: "VitalSource integration is not configured" });
+      res.json(await discoverVitalSourceCandidate(req.params.id));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "VitalSource discovery failed" });
     }
   });
 
