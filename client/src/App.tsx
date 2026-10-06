@@ -355,6 +355,9 @@ function LandingPage() {
           <AccessiBooksLogo asHeading={false} />
           <div className="flex items-center gap-3">
             <AccessibilityControls />
+            <Button variant="ghost" asChild>
+              <a href="/distributions">Distributions</a>
+            </Button>
             <Button
               variant="outline"
               className="rounded-xl border-2"
@@ -823,6 +826,30 @@ function App() {
 
   if (isLoading) {
     return <Loader variant="page" message="Loading AccessiBooks…" />;
+  }
+
+  if (!isAuthenticated && pathname === "/hospitals") {
+    return (
+      <MotionConfig reducedMotion={reduceMotion}>
+        <TooltipProvider>
+          <div className="min-h-screen bg-background text-foreground">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+              <header className="mb-8 flex items-center justify-between gap-4">
+                <AccessiBooksLogo asHeading={false} />
+                <div className="flex items-center gap-3">
+                  <Button variant="ghost" asChild>
+                    <a href="/distributions">All distributions</a>
+                  </Button>
+                  <AccessibilityControls />
+                </div>
+              </header>
+              <HospitalCatalogue />
+            </div>
+          </div>
+          <Toaster />
+        </TooltipProvider>
+      </MotionConfig>
+    );
   }
 
   if (pathname === "/distributions") {
