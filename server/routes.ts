@@ -14,6 +14,8 @@ import { db } from "./db";
 import { books } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { getHospitalCatalogueFacets, getHospitalCatalogueItem, searchHospitalCatalogue } from "./hospitalCatalogue";
+import { isWorldCatConfigured, lookupAustralianWorldCatHoldingsByIsbn, lookupWorldCatByIsbn, worldCatStatus } from "./worldcat";
+import { importWorldCatIsbn } from "./worldcatCatalogue";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
 
@@ -190,6 +192,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Hospital catalogue item failed:", error);
       res.status(500).json({ message: "Failed to load hospital catalogue item" });
+    }
+  });
+
+  // WorldCat commercial-title integration. Metadata discovery does not imply content rights.
+  app.get("/api/hospitals/worldcat/status", requireAdmin, async (_req: Request, res: Response) => {
+    res.json(worldCatStatus());
+  });
+
+  app.get("/api/hospitals/worldcat/isbn/:isbn", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isWorldCatConfigured()) {
+        return res.status(503).json({
+          message: "WorldCat integration is not configured",
+          requiredEnvironment: [
+            "OCLC_WORLDCAT_CLIENT_ID",
+            "OCLC_WORLDCAT_CLIENT_SECRET",
+          ],
+          optionalEnvironment: ["OCLC_WORLDCAT_REGISTRY_ID"],
+        });
+      }
+      res.json(await lookupWorldCatByIsbn(req.params.isbn, { limit: 20 }));
+    } catch (error) {
+      console.error("WorldCat ISBN lookup failed:", error);
+      res.status(502).json({
+        message: "WorldCat ISBN lookup failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/hospitals/worldcat/isbn/:isbn/holdings", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isWorldCatConfigured()) {
+        return res.status(503).json({ message: "WorldCat integration is not configured" });
+      }
+      res.json(await lookupAustralianWorldCatHoldingsByIsbn(req.params.isbn, { limit: 50 }));
+    } catch (error) {
+      console.error("WorldCat holdings lookup failed:", error);
+      res.status(502).json({
+        message: "WorldCat holdings lookup failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/hospitals/catalogue/worldcat/import-isbn", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const isbn = typeof req.body?.isbn === "string" ? req.body.isbn : "";
+      if (!isbn) return res.status(400).json({ message: "ISBN is required" });
+      if (!isWorldCatConfigured()) {
+        return res.status(503).json({ message: "WorldCat integration is not configured" });
+      }
+
+      const result = await importWorldCatIsbn(isbn);
+      res.status(201).json(result);
+    } catch (error) {
+      console.error("WorldCat catalogue import failed:", error);
+      res.status(502).json({
+        message: "WorldCat catalogue import failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
     }
   });
 
