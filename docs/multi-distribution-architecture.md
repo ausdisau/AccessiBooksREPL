@@ -208,6 +208,8 @@ Example body:
 
 ## UI architecture
 
+Public distribution chooser: `/distributions`
+
 The authenticated application navigation supports:
 - Library
 - Hospitals
@@ -215,13 +217,28 @@ The authenticated application navigation supports:
 - Libraries
 - Community
 - Kids
+- Aged Care
+- Rehab
+- Workplace
+- Justice
+- University
+- Easy Read
+- Professional / Clinical Learning
 - Player
 
 Public prototype routes are implemented for:
+- `/hospitals`
 - `/educate`
 - `/libraries`
 - `/community`
 - `/kids`
+- `/aged-care`
+- `/rehab`
+- `/workplace`
+- `/justice`
+- `/university`
+- `/easy-read`
+- `/professional`
 
 Hospitals remains a specialised catalogue view because it already uses the live hospital catalogue API.
 
