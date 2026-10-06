@@ -22,6 +22,13 @@ interface HospitalCatalogueItem {
   author: string;
   description: string | null;
   publicationYear: number | null;
+  publisher: string | null;
+  editionStatement: string | null;
+  oclcNumber: string | null;
+  isbn10: string | null;
+  isbn13: string | null;
+  commercialTitle: boolean;
+  acquisitionStatus: string;
   language: string;
   audience: string;
   contentKind: string;
@@ -222,6 +229,7 @@ export function HospitalCatalogue() {
                     <CardTitle className="text-xl">{item.title}</CardTitle>
                     <CardDescription>
                       {item.author}{item.publicationYear ? ` · ${item.publicationYear}` : ""}
+                      {item.publisher ? ` · ${item.publisher}` : ""}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="flex h-full flex-col">
@@ -232,10 +240,28 @@ export function HospitalCatalogue() {
                         <dt className="font-medium">Formats</dt>
                         <dd className="text-muted-foreground">{formats.length ? formats.join(", ") : "Metadata only"}</dd>
                       </div>
+                      {item.editionStatement && (
+                        <div>
+                          <dt className="font-medium">Edition</dt>
+                          <dd className="text-muted-foreground">{item.editionStatement}</dd>
+                        </div>
+                      )}
+                      {(item.isbn13 || item.isbn10) && (
+                        <div>
+                          <dt className="font-medium">ISBN</dt>
+                          <dd className="text-muted-foreground">{item.isbn13 || item.isbn10}</dd>
+                        </div>
+                      )}
                       <div>
                         <dt className="font-medium">Availability</dt>
                         <dd className="text-muted-foreground">{humanise(item.availabilityStatus)}</dd>
                       </div>
+                      {item.commercialTitle && (
+                        <div>
+                          <dt className="font-medium">AccessiBooks acquisition</dt>
+                          <dd className="text-muted-foreground">{humanise(item.acquisitionStatus)}</dd>
+                        </div>
+                      )}
                       <div>
                         <dt className="font-medium">Rights status</dt>
                         <dd className="text-muted-foreground">{humanise(item.rightsStatus)}</dd>
