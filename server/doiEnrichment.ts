@@ -260,8 +260,8 @@ function scienceDirectHasFullText(
     obj.originalText ||
       obj.fullText ||
       obj["body"] ||
-      obj["scopus-id"] ||
-      obj["scopus-eid"],
+      obj["original-text"] ||
+      obj["full-text"],
   );
 }
 
@@ -578,10 +578,11 @@ export async function enrichHospitalKnowledgeByDoi(
   options: DoiEnrichmentOptions = {},
 ): Promise<DoiEnrichmentResult> {
   const doi = cleanDoi(doiInput);
-  const requested = [
-    ...new Set(
-      (options.providers?.length ? options.providers : defaultProviders),
-    ),
+  const requested: DoiEnrichmentProvider[] = [
+    ...new Set<DoiEnrichmentProvider>([
+      "crossref",
+      ...(options.providers?.length ? options.providers : defaultProviders),
+    ]),
   ];
 
   const [run] = await db
