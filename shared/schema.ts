@@ -262,3 +262,92 @@ export const hospitalCatalogueIngestionRuns = pgTable("hospital_catalogue_ingest
 export type HospitalCatalogueSource = typeof hospitalCatalogueSources.$inferSelect;
 export type InsertHospitalCatalogueSource = typeof hospitalCatalogueSources.$inferInsert;
 export type HospitalCatalogueIngestionRun = typeof hospitalCatalogueIngestionRuns.$inferSelect;
+
+
+export const hospitalCatalogueSuppliers = pgTable("hospital_catalogue_suppliers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code", { length: 64 }).notNull().unique(),
+  name: text("name").notNull(),
+  supplierType: varchar("supplier_type", { length: 40 }).notNull().default("commercial"),
+  websiteUrl: text("website_url"),
+  integrationStatus: varchar("integration_status", { length: 32 }).notNull().default("planned"),
+  supportsDiscovery: boolean("supports_discovery").notNull().default(false),
+  supportsAvailability: boolean("supports_availability").notNull().default(false),
+  supportsCheckout: boolean("supports_checkout").notNull().default(false),
+  supportsInstitutionalLicensing: boolean("supports_institutional_licensing").notNull().default(false),
+  supportsAccessibleFormats: boolean("supports_accessible_formats").notNull().default(false),
+  configurationNote: text("configuration_note"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  index("idx_hospital_supplier_type").on(table.supplierType),
+  index("idx_hospital_supplier_status").on(table.integrationStatus),
+]);
+
+export const hospitalCatalogueAcquisitions = pgTable("hospital_catalogue_acquisitions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  catalogueItemId: varchar("catalogue_item_id").notNull().references(() => hospitalCatalogueItems.id, { onDelete: "cascade" }),
+  supplierId: varchar("supplier_id").references(() => hospitalCatalogueSuppliers.id, { onDelete: "set null" }),
+  supplierTitleId: text("supplier_title_id"),
+  supplierUrl: text("supplier_url"),
+
+  // Scope can represent a whole program, a health network, a hospital or another
+  // contractually defined institutional group without storing patient data.
+  scopeType: varchar("scope_type", { length: 32 }).notNull().default("program"),
+  scopeKey: varchar("scope_key", { length: 120 }).notNull().default("accessibooks-hospitals"),
+
+  acquisitionStatus: varchar("acquisition_status", { length: 40 }).notNull().default("under_review"),
+  licenceModel: varchar("licence_model", { length: 48 }).notNull().default("unknown"),
+  accessMode: varchar("access_mode", { length: 40 }).notNull().default("external"),
+  territory: varchar("territory", { length: 16 }).notNull().default("AU"),
+
+  formats: jsonb("formats").$type<string[]>().default([]),
+  accessibilityFeatures: jsonb("accessibility_features").$type<string[]>().default([]),
+  copiesOrSeats: integer("copies_or_seats"),
+  concurrentUsers: integer("concurrent_users"),
+  loanPeriodDays: integer("loan_period_days"),
+
+  agreementReference: text("agreement_reference"),
+  rightsBasis: varchar("rights_basis", { length: 48 }).notNull().default("commercial_licence"),
+  rightsNote: text("rights_note"),
+  termsUrl: text("terms_url"),
+  startsAt: timestamp("starts_at"),
+  endsAt: timestamp("ends_at"),
+  verifiedAt: timestamp("verified_at"),
+  verifiedBy: text("verified_by"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  index("idx_hospital_acquisition_item").on(table.catalogueItemId),
+  index("idx_hospital_acquisition_supplier").on(table.supplierId),
+  index("idx_hospital_acquisition_status").on(table.acquisitionStatus),
+  index("idx_hospital_acquisition_scope").on(table.scopeType, table.scopeKey),
+]);
+
+export const hospitalCatalogueAccessRoutes = pgTable("hospital_catalogue_access_routes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  acquisitionId: varchar("acquisition_id").notNull().references(() => hospitalCatalogueAcquisitions.id, { onDelete: "cascade" }),
+  format: varchar("format", { length: 32 }).notNull(),
+  routeType: varchar("route_type", { length: 40 }).notNull().default("external_link"),
+  url: text("url"),
+  requiresAuthentication: boolean("requires_authentication").notNull().default(true),
+  requiresLibraryCard: boolean("requires_library_card").notNull().default(false),
+  drmProtected: boolean("drm_protected").notNull().default(false),
+  downloadAllowed: boolean("download_allowed").notNull().default(false),
+  offlineAllowed: boolean("offline_allowed").notNull().default(false),
+  accessibleFormat: boolean("accessible_format").notNull().default(false),
+  accessibilityFeatures: jsonb("accessibility_features").$type<string[]>().default([]),
+  availabilityStatus: varchar("availability_status", { length: 40 }).notNull().default("not_verified"),
+  lastVerifiedAt: timestamp("last_verified_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  index("idx_hospital_access_route_acquisition").on(table.acquisitionId),
+  index("idx_hospital_access_route_format").on(table.format),
+  index("idx_hospital_access_route_status").on(table.availabilityStatus),
+]);
+
+export type HospitalCatalogueSupplier = typeof hospitalCatalogueSuppliers.$inferSelect;
+export type HospitalCatalogueAcquisition = typeof hospitalCatalogueAcquisitions.$inferSelect;
+export type HospitalCatalogueAccessRoute = typeof hospitalCatalogueAccessRoutes.$inferSelect;
