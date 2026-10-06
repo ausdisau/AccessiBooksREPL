@@ -13,6 +13,22 @@ import multer from "multer";
 import { db } from "./db";
 import { books } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { getHospitalCatalogueFacets, getHospitalCatalogueItem, searchHospitalCatalogue } from "./hospitalCatalogue";
+import { isWorldCatConfigured, lookupAustralianWorldCatHoldingsByIsbn, lookupWorldCatByIsbn, worldCatStatus } from "./worldcat";
+import { importWorldCatIsbn } from "./worldcatCatalogue";
+import { createHospitalCatalogueAcquisition, createHospitalCatalogueAccessRoute, ensureHospitalCatalogueSuppliersSeeded, getHospitalCatalogueAcquisitions, getPublicHospitalCatalogueAccessOptions, listHospitalCatalogueSuppliers, updateHospitalCatalogueAcquisition, updateHospitalCatalogueAccessRoute } from "./hospitalCatalogueAcquisitions";
+import { ebscoStatus, getEbscoProfileInfo, isEbscoConfigured, retrieveEbscoRecord, searchEbsco, searchEbscoByIsbn, summariseEbscoFullText } from "./ebsco";
+import { discoverVitalSourceCandidate } from "./vitalsourceCatalogue";
+import { enrichHospitalKnowledgeByDoi, getHospitalKnowledgeEnrichmentRun, listHospitalKnowledgeSources, type DoiEnrichmentProvider } from "./doiEnrichment";
+import { getVitalSourceProduct, isVitalSourceConfigured, vitalSourceStatus } from "./vitalsource";
+import { getNewsApiSources, isNewsApiConfigured, newsApiStatus, searchNewsApi } from "./newsApi";
+import { getScienceDirectArticleByDoi, isScienceDirectConfigured, scienceDirectStatus, searchScienceDirect } from "./scienceDirect";
+import { getWebOfScienceDocument, getWebOfScienceJournalByIssn, getWebOfScienceJournalReport, searchWebOfScienceDocuments, webOfScienceStatus } from "./webOfScience";
+import { getSpringerNatureFullTextJatsByDoi, getSpringerNatureMetaByDoi, isSpringerNatureConfigured, searchSpringerNatureMeta, springerNatureStatus } from "./springerNature";
+import { listHospitalKnowledgeProviders } from "./hospitalKnowledgeProviders";
+import { getHospitalKnowledgeItem, importCrossrefDoi } from "./hospitalKnowledge";
+import { crossrefStatus, getCrossrefWork, searchCrossrefWorks } from "./crossref";
+import { addCatalogueItemToDistribution, getAccessiBooksDistribution, listAccessiBooksDistributions, searchDistributionCatalogue } from "./distributions";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
 
@@ -124,6 +140,764 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error updating preferences:", error);
       res.status(500).json({ message: "Failed to update preferences" });
+    }
+  });
+
+  // AccessiBooks @ Hospitals - searchable, rights-aware catalogue.
+  app.get("/api/hospitals/catalogue", async (req: Request, res: Response) => {
+    try {
+      const {
+        q,
+        audience,
+        collection,
+        language,
+        rightsStatus,
+        availabilityStatus,
+        format,
+        clinicalInformation,
+        sort,
+        limit,
+        offset,
+      } = req.query;
+
+      const parsedClinical =
+        clinicalInformation === "true"
+          ? true
+          : clinicalInformation === "false"
+            ? false
+            : undefined;
+
+      const items = await searchHospitalCatalogue({
+        q: typeof q === "string" ? q : undefined,
+        audience: typeof audience === "string" ? audience : undefined,
+        collection: typeof collection === "string" ? collection : undefined,
+        language: typeof language === "string" ? language : undefined,
+        rightsStatus: typeof rightsStatus === "string" ? rightsStatus : undefined,
+        availabilityStatus: typeof availabilityStatus === "string" ? availabilityStatus : undefined,
+        format: typeof format === "string" ? format as any : undefined,
+        clinicalInformation: parsedClinical,
+        sort: typeof sort === "string" ? sort as any : undefined,
+        limit: typeof limit === "string" ? Number(limit) : undefined,
+        offset: typeof offset === "string" ? Number(offset) : undefined,
+      });
+
+      res.json(items);
+    } catch (error) {
+      console.error("Hospital catalogue search failed:", error);
+      res.status(500).json({ message: "Failed to search hospital catalogue" });
+    }
+  });
+
+  app.get("/api/hospitals/catalogue/facets", async (_req: Request, res: Response) => {
+    try {
+      res.json(await getHospitalCatalogueFacets());
+    } catch (error) {
+      console.error("Hospital catalogue facets failed:", error);
+      res.status(500).json({ message: "Failed to load hospital catalogue filters" });
+    }
+  });
+
+  app.get("/api/hospitals/catalogue/:id", async (req: Request, res: Response) => {
+    try {
+      const item = await getHospitalCatalogueItem(req.params.id);
+      if (!item) return res.status(404).json({ message: "Catalogue item not found" });
+      res.json(item);
+    } catch (error) {
+      console.error("Hospital catalogue item failed:", error);
+      res.status(500).json({ message: "Failed to load hospital catalogue item" });
+    }
+  });
+
+  // WorldCat commercial-title integration. Metadata discovery does not imply content rights.
+  app.get("/api/hospitals/worldcat/status", requireAdmin, async (_req: Request, res: Response) => {
+    res.json(worldCatStatus());
+  });
+
+  app.get("/api/hospitals/worldcat/isbn/:isbn", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isWorldCatConfigured()) {
+        return res.status(503).json({
+          message: "WorldCat integration is not configured",
+          requiredEnvironment: [
+            "OCLC_WORLDCAT_CLIENT_ID",
+            "OCLC_WORLDCAT_CLIENT_SECRET",
+          ],
+          optionalEnvironment: ["OCLC_WORLDCAT_REGISTRY_ID"],
+        });
+      }
+      res.json(await lookupWorldCatByIsbn(req.params.isbn, { limit: 20 }));
+    } catch (error) {
+      console.error("WorldCat ISBN lookup failed:", error);
+      res.status(502).json({
+        message: "WorldCat ISBN lookup failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/hospitals/worldcat/isbn/:isbn/holdings", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isWorldCatConfigured()) {
+        return res.status(503).json({ message: "WorldCat integration is not configured" });
+      }
+      res.json(await lookupAustralianWorldCatHoldingsByIsbn(req.params.isbn, { limit: 50 }));
+    } catch (error) {
+      console.error("WorldCat holdings lookup failed:", error);
+      res.status(502).json({
+        message: "WorldCat holdings lookup failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/hospitals/catalogue/worldcat/import-isbn", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const isbn = typeof req.body?.isbn === "string" ? req.body.isbn : "";
+      if (!isbn) return res.status(400).json({ message: "ISBN is required" });
+      if (!isWorldCatConfigured()) {
+        return res.status(503).json({ message: "WorldCat integration is not configured" });
+      }
+
+      const result = await importWorldCatIsbn(isbn);
+      res.status(201).json(result);
+    } catch (error) {
+      console.error("WorldCat catalogue import failed:", error);
+      res.status(502).json({
+        message: "WorldCat catalogue import failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // Commercial acquisition and lawful access management.
+  app.get("/api/hospitals/catalogue/suppliers", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      res.json(await listHospitalCatalogueSuppliers());
+    } catch (error) {
+      console.error("Hospital suppliers failed:", error);
+      res.status(500).json({ message: "Failed to load catalogue suppliers" });
+    }
+  });
+
+  app.get("/api/hospitals/catalogue/:id/acquisitions", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await getHospitalCatalogueAcquisitions(req.params.id));
+    } catch (error) {
+      console.error("Hospital acquisitions failed:", error);
+      res.status(500).json({ message: "Failed to load catalogue acquisitions" });
+    }
+  });
+
+  app.get("/api/hospitals/catalogue/:id/access-options", async (req: Request, res: Response) => {
+    try {
+      res.json(await getPublicHospitalCatalogueAccessOptions(req.params.id));
+    } catch (error) {
+      console.error("Hospital access options failed:", error);
+      res.status(500).json({ message: "Failed to load access options" });
+    }
+  });
+
+  app.post("/api/hospitals/catalogue/:id/acquisitions", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const body = req.body ?? {};
+      const acquisition = await createHospitalCatalogueAcquisition({
+        catalogueItemId: req.params.id,
+        supplierCode: typeof body.supplierCode === "string" ? body.supplierCode : undefined,
+        supplierTitleId: typeof body.supplierTitleId === "string" ? body.supplierTitleId : null,
+        supplierUrl: typeof body.supplierUrl === "string" ? body.supplierUrl : null,
+        scopeType: typeof body.scopeType === "string" ? body.scopeType : undefined,
+        scopeKey: typeof body.scopeKey === "string" ? body.scopeKey : undefined,
+        acquisitionStatus: typeof body.acquisitionStatus === "string" ? body.acquisitionStatus : undefined,
+        licenceModel: typeof body.licenceModel === "string" ? body.licenceModel : undefined,
+        accessMode: typeof body.accessMode === "string" ? body.accessMode : undefined,
+        territory: typeof body.territory === "string" ? body.territory : undefined,
+        formats: Array.isArray(body.formats) ? body.formats.filter((v: unknown) => typeof v === "string") : undefined,
+        accessibilityFeatures: Array.isArray(body.accessibilityFeatures) ? body.accessibilityFeatures.filter((v: unknown) => typeof v === "string") : undefined,
+        copiesOrSeats: typeof body.copiesOrSeats === "number" ? body.copiesOrSeats : null,
+        concurrentUsers: typeof body.concurrentUsers === "number" ? body.concurrentUsers : null,
+        loanPeriodDays: typeof body.loanPeriodDays === "number" ? body.loanPeriodDays : null,
+        agreementReference: typeof body.agreementReference === "string" ? body.agreementReference : null,
+        rightsBasis: typeof body.rightsBasis === "string" ? body.rightsBasis : undefined,
+        rightsNote: typeof body.rightsNote === "string" ? body.rightsNote : null,
+        termsUrl: typeof body.termsUrl === "string" ? body.termsUrl : null,
+        startsAt: typeof body.startsAt === "string" ? new Date(body.startsAt) : null,
+        endsAt: typeof body.endsAt === "string" ? new Date(body.endsAt) : null,
+        verifiedAt: typeof body.verifiedAt === "string" ? new Date(body.verifiedAt) : null,
+        verifiedBy: typeof body.verifiedBy === "string" ? body.verifiedBy : null,
+      });
+      res.status(201).json(acquisition);
+    } catch (error) {
+      console.error("Create hospital acquisition failed:", error);
+      res.status(400).json({ message: error instanceof Error ? error.message : "Failed to create acquisition" });
+    }
+  });
+
+  app.patch("/api/hospitals/acquisitions/:id", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const body = req.body ?? {};
+      const patch: any = {};
+      const stringFields = ["supplierCode", "supplierTitleId", "supplierUrl", "scopeType", "scopeKey", "acquisitionStatus", "licenceModel", "accessMode", "territory", "agreementReference", "rightsBasis", "rightsNote", "termsUrl", "verifiedBy"];
+      for (const field of stringFields) {
+        if (typeof body[field] === "string" || body[field] === null) patch[field] = body[field];
+      }
+      if (Array.isArray(body.formats)) patch.formats = body.formats.filter((v: unknown) => typeof v === "string");
+      if (Array.isArray(body.accessibilityFeatures)) patch.accessibilityFeatures = body.accessibilityFeatures.filter((v: unknown) => typeof v === "string");
+      for (const field of ["copiesOrSeats", "concurrentUsers", "loanPeriodDays"]) {
+        if (typeof body[field] === "number" || body[field] === null) patch[field] = body[field];
+      }
+      for (const field of ["startsAt", "endsAt", "verifiedAt"]) {
+        if (typeof body[field] === "string") patch[field] = new Date(body[field]);
+        if (body[field] === null) patch[field] = null;
+      }
+      res.json(await updateHospitalCatalogueAcquisition(req.params.id, patch));
+    } catch (error) {
+      console.error("Update hospital acquisition failed:", error);
+      res.status(400).json({ message: error instanceof Error ? error.message : "Failed to update acquisition" });
+    }
+  });
+
+  app.post("/api/hospitals/acquisitions/:id/routes", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const body = req.body ?? {};
+      if (typeof body.format !== "string") return res.status(400).json({ message: "format is required" });
+      const route = await createHospitalCatalogueAccessRoute({
+        acquisitionId: req.params.id,
+        format: body.format,
+        routeType: typeof body.routeType === "string" ? body.routeType : undefined,
+        url: typeof body.url === "string" ? body.url : null,
+        requiresAuthentication: typeof body.requiresAuthentication === "boolean" ? body.requiresAuthentication : undefined,
+        requiresLibraryCard: typeof body.requiresLibraryCard === "boolean" ? body.requiresLibraryCard : undefined,
+        drmProtected: typeof body.drmProtected === "boolean" ? body.drmProtected : undefined,
+        downloadAllowed: typeof body.downloadAllowed === "boolean" ? body.downloadAllowed : undefined,
+        offlineAllowed: typeof body.offlineAllowed === "boolean" ? body.offlineAllowed : undefined,
+        accessibleFormat: typeof body.accessibleFormat === "boolean" ? body.accessibleFormat : undefined,
+        accessibilityFeatures: Array.isArray(body.accessibilityFeatures) ? body.accessibilityFeatures.filter((v: unknown) => typeof v === "string") : undefined,
+        availabilityStatus: typeof body.availabilityStatus === "string" ? body.availabilityStatus : undefined,
+        lastVerifiedAt: typeof body.lastVerifiedAt === "string" ? new Date(body.lastVerifiedAt) : null,
+      });
+      res.status(201).json(route);
+    } catch (error) {
+      console.error("Create hospital access route failed:", error);
+      res.status(400).json({ message: error instanceof Error ? error.message : "Failed to create access route" });
+    }
+  });
+
+  app.patch("/api/hospitals/access-routes/:id", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const body = req.body ?? {};
+      const patch: any = {};
+      const stringFields = ["format", "routeType", "url", "availabilityStatus"];
+      for (const field of stringFields) {
+        if (typeof body[field] === "string" || body[field] === null) patch[field] = body[field];
+      }
+      const boolFields = ["requiresAuthentication", "requiresLibraryCard", "drmProtected", "downloadAllowed", "offlineAllowed", "accessibleFormat"];
+      for (const field of boolFields) {
+        if (typeof body[field] === "boolean") patch[field] = body[field];
+      }
+      if (Array.isArray(body.accessibilityFeatures)) patch.accessibilityFeatures = body.accessibilityFeatures.filter((v: unknown) => typeof v === "string");
+      if (typeof body.lastVerifiedAt === "string") patch.lastVerifiedAt = new Date(body.lastVerifiedAt);
+      if (body.lastVerifiedAt === null) patch.lastVerifiedAt = null;
+      res.json(await updateHospitalCatalogueAccessRoute(req.params.id, patch));
+    } catch (error) {
+      console.error("Update hospital access route failed:", error);
+      res.status(400).json({ message: error instanceof Error ? error.message : "Failed to update access route" });
+    }
+  });
+
+  // EBSCO Discovery Service integration.
+  // Institution-scoped discovery only: catalogue metadata or full-text indicators do not
+  // become a patient-facing AccessiBooks entitlement without a verified acquisition route.
+  app.get("/api/hospitals/ebsco/status", requireAdmin, async (_req: Request, res: Response) => {
+    res.json(ebscoStatus());
+  });
+
+  app.get("/api/hospitals/ebsco/info", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      if (!isEbscoConfigured()) {
+        return res.status(503).json({
+          message: "EBSCO EDS integration is not configured",
+          requiredEnvironment: [
+            "EBSCO_EDS_USER_ID",
+            "EBSCO_EDS_PASSWORD",
+            "EBSCO_EDS_PROFILE",
+          ],
+          optionalEnvironment: [
+            "EBSCO_EDS_API_KEY",
+            "EBSCO_EDS_INTERFACE_ID",
+            "EBSCO_EDS_ORG",
+          ],
+        });
+      }
+      res.json(await getEbscoProfileInfo());
+    } catch (error) {
+      console.error("EBSCO profile info failed:", error);
+      res.status(502).json({
+        message: "EBSCO profile info failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/hospitals/ebsco/search", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isEbscoConfigured()) {
+        return res.status(503).json({ message: "EBSCO EDS integration is not configured" });
+      }
+      const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+      if (!q) return res.status(400).json({ message: "q is required" });
+
+      const resultsPerPage =
+        typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+      const pageNumber =
+        typeof req.query.page === "string" ? Number(req.query.page) : undefined;
+      const guest = req.query.guest === "true";
+
+      res.json(await searchEbsco({
+        query: q,
+        resultsPerPage,
+        pageNumber,
+        sort: typeof req.query.sort === "string" ? req.query.sort : undefined,
+        view: req.query.view === "title" || req.query.view === "brief" || req.query.view === "detailed"
+          ? req.query.view
+          : "detailed",
+        includeFacets: req.query.facets !== "false",
+        guest,
+      }));
+    } catch (error) {
+      console.error("EBSCO search failed:", error);
+      res.status(502).json({
+        message: "EBSCO search failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/hospitals/ebsco/isbn/:isbn", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isEbscoConfigured()) {
+        return res.status(503).json({ message: "EBSCO EDS integration is not configured" });
+      }
+      res.json(await searchEbscoByIsbn(req.params.isbn, {
+        resultsPerPage: 20,
+        view: "detailed",
+        includeFacets: true,
+        guest: req.query.guest === "true",
+      }));
+    } catch (error) {
+      console.error("EBSCO ISBN search failed:", error);
+      res.status(502).json({
+        message: "EBSCO ISBN search failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/hospitals/catalogue/:id/ebsco/discover", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isEbscoConfigured()) {
+        return res.status(503).json({ message: "EBSCO EDS integration is not configured" });
+      }
+      const item = await getHospitalCatalogueItem(req.params.id);
+      if (!item) return res.status(404).json({ message: "Catalogue item not found" });
+      const isbn = item.isbn13 || item.isbn10;
+      if (!isbn) {
+        return res.status(400).json({
+          message: "Catalogue item requires an ISBN before EBSCO discovery",
+        });
+      }
+      res.json({
+        catalogueItemId: item.id,
+        isbn,
+        result: await searchEbscoByIsbn(isbn, {
+          resultsPerPage: 20,
+          view: "detailed",
+          includeFacets: true,
+        }),
+        entitlementStatus: "not_recorded",
+        note:
+          "EDS search results are institution-scoped discovery. Review the selected record and licence/access route before exposing it to patients.",
+      });
+    } catch (error) {
+      console.error("EBSCO catalogue discovery failed:", error);
+      res.status(502).json({
+        message: "EBSCO catalogue discovery failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/hospitals/ebsco/retrieve", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isEbscoConfigured()) {
+        return res.status(503).json({ message: "EBSCO EDS integration is not configured" });
+      }
+      const dbId = typeof req.body?.dbId === "string" ? req.body.dbId : "";
+      const an = typeof req.body?.an === "string" ? req.body.an : "";
+      if (!dbId || !an) {
+        return res.status(400).json({ message: "dbId and an are required" });
+      }
+      const record = await retrieveEbscoRecord({
+        dbId,
+        an,
+        ebookPreferredFormat:
+          typeof req.body?.ebookPreferredFormat === "string"
+            ? req.body.ebookPreferredFormat
+            : undefined,
+        guest: req.body?.guest === true,
+      });
+      res.json({
+        record,
+        fullText: summariseEbscoFullText(record),
+      });
+    } catch (error) {
+      console.error("EBSCO retrieve failed:", error);
+      res.status(502).json({
+        message: "EBSCO retrieve failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // Research, scholarly literature and current-awareness stack.
+  app.get("/api/hospitals/knowledge/providers", requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      res.json(await listHospitalKnowledgeProviders());
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load knowledge providers" });
+    }
+  });
+
+  app.get("/api/hospitals/research/status", requireAdmin, async (_req: Request, res: Response) => {
+    res.json({
+      crossref: crossrefStatus(),
+      springerNature: springerNatureStatus(),
+      webOfScience: webOfScienceStatus(),
+      scienceDirect: scienceDirectStatus(),
+      newsApi: newsApiStatus(),
+      lexisNexis: {
+        configured: false,
+        status: "partnership_required",
+        note: "Nexis Data as a Service endpoints and datasets are provisioned through the licensed developer portal.",
+      },
+    });
+  });
+
+  app.get("/api/hospitals/research/crossref/doi/:doi", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await getCrossrefWork(req.params.doi));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Crossref DOI lookup failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/crossref/search", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await searchCrossrefWorks({
+        query: typeof req.query.q === "string" ? req.query.q : undefined,
+        title: typeof req.query.title === "string" ? req.query.title : undefined,
+        author: typeof req.query.author === "string" ? req.query.author : undefined,
+        rows: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+        offset: typeof req.query.offset === "string" ? Number(req.query.offset) : undefined,
+        fromPublishedDate: typeof req.query.from === "string" ? req.query.from : undefined,
+        untilPublishedDate: typeof req.query.to === "string" ? req.query.to : undefined,
+      }));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Crossref search failed" });
+    }
+  });
+
+  app.post("/api/hospitals/knowledge/crossref/import-doi", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const doi = typeof req.body?.doi === "string" ? req.body.doi : "";
+      if (!doi) return res.status(400).json({ message: "doi is required" });
+      res.status(201).json(await importCrossrefDoi(doi));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Crossref import failed" });
+    }
+  });
+
+  app.get("/api/hospitals/knowledge/:id", requireAdmin, async (req: Request, res: Response) => {
+    const item = await getHospitalKnowledgeItem(req.params.id);
+    if (!item) return res.status(404).json({ message: "Knowledge item not found" });
+    res.json(item);
+  });
+
+  app.get("/api/hospitals/research/springer/search", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isSpringerNatureConfigured()) return res.status(503).json({ message: "Springer Nature integration is not configured" });
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      if (!q) return res.status(400).json({ message: "q is required" });
+      res.json(await searchSpringerNatureMeta({
+        q,
+        start: typeof req.query.start === "string" ? Number(req.query.start) : undefined,
+        pageSize: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+      }));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Springer Nature search failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/springer/doi/:doi", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isSpringerNatureConfigured()) return res.status(503).json({ message: "Springer Nature integration is not configured" });
+      res.json(await getSpringerNatureMetaByDoi(req.params.doi));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Springer Nature DOI lookup failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/springer/doi/:doi/fulltext-jats", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isSpringerNatureConfigured()) return res.status(503).json({ message: "Springer Nature integration is not configured" });
+      const xml = await getSpringerNatureFullTextJatsByDoi(req.params.doi);
+      res.type("application/xml").send(xml);
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Springer Nature full-text retrieval failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/wos/search", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      if (!q) return res.status(400).json({ message: "q is required" });
+      res.json(await searchWebOfScienceDocuments({
+        q,
+        db: typeof req.query.db === "string" ? req.query.db : undefined,
+        limit: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+        page: typeof req.query.page === "string" ? Number(req.query.page) : undefined,
+        detail: req.query.detail === "short" ? "short" : "full",
+      }));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Web of Science search failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/wos/documents/:uid", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await getWebOfScienceDocument(req.params.uid, req.query.detail === "short" ? "short" : "full"));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Web of Science document lookup failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/wos/journals", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const issn = typeof req.query.issn === "string" ? req.query.issn : "";
+      if (!issn) return res.status(400).json({ message: "issn is required" });
+      res.json(await getWebOfScienceJournalByIssn(issn));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Web of Science journal lookup failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/wos/journals/:id/reports/:year", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await getWebOfScienceJournalReport(req.params.id, Number(req.params.year)));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "Web of Science journal report failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/sciencedirect/search", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isScienceDirectConfigured()) return res.status(503).json({ message: "ScienceDirect integration is not configured" });
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      if (!q) return res.status(400).json({ message: "q is required" });
+      res.json(await searchScienceDirect({
+        query: q,
+        count: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+        start: typeof req.query.start === "string" ? Number(req.query.start) : undefined,
+      }));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "ScienceDirect search failed" });
+    }
+  });
+
+  app.get("/api/hospitals/research/sciencedirect/doi/:doi", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isScienceDirectConfigured()) return res.status(503).json({ message: "ScienceDirect integration is not configured" });
+      const accept = req.query.format === "xml" ? "text/xml" : req.query.format === "text" ? "text/plain" : "application/json";
+      const result = await getScienceDirectArticleByDoi({
+        doi: req.params.doi,
+        view: req.query.view === "FULL" || req.query.view === "META_ABS" ? req.query.view : "META_ABS",
+        accept,
+      });
+      if (typeof result === "string") return res.type(accept).send(result);
+      res.json(result);
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "ScienceDirect DOI retrieval failed" });
+    }
+  });
+
+  app.get("/api/hospitals/news/search", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isNewsApiConfigured()) return res.status(503).json({ message: "News API is not configured" });
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      if (!q) return res.status(400).json({ message: "q is required" });
+      res.json(await searchNewsApi({
+        q,
+        from: typeof req.query.from === "string" ? req.query.from : undefined,
+        to: typeof req.query.to === "string" ? req.query.to : undefined,
+        language: typeof req.query.language === "string" ? req.query.language : undefined,
+        sortBy: req.query.sort === "relevancy" || req.query.sort === "popularity" ? req.query.sort : "publishedAt",
+        pageSize: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+        page: typeof req.query.page === "string" ? Number(req.query.page) : undefined,
+        domains: typeof req.query.domains === "string" ? req.query.domains : undefined,
+      }));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "News API search failed" });
+    }
+  });
+
+  app.get("/api/hospitals/news/sources", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isNewsApiConfigured()) return res.status(503).json({ message: "News API is not configured" });
+      res.json(await getNewsApiSources({
+        country: typeof req.query.country === "string" ? req.query.country : undefined,
+        category: typeof req.query.category === "string" ? req.query.category : undefined,
+        language: typeof req.query.language === "string" ? req.query.language : undefined,
+      }));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "News API sources failed" });
+    }
+  });
+
+  // VitalSource commercial ebook discovery remains separate from activation.
+  app.get("/api/hospitals/vitalsource/status", requireAdmin, async (_req: Request, res: Response) => {
+    res.json(vitalSourceStatus());
+  });
+
+  app.get("/api/hospitals/vitalsource/products/:identifier", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isVitalSourceConfigured()) return res.status(503).json({ message: "VitalSource integration is not configured" });
+      res.json(await getVitalSourceProduct(req.params.identifier));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "VitalSource lookup failed" });
+    }
+  });
+
+  app.post("/api/hospitals/catalogue/:id/vitalsource/discover", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!isVitalSourceConfigured()) return res.status(503).json({ message: "VitalSource integration is not configured" });
+      res.json(await discoverVitalSourceCandidate(req.params.id));
+    } catch (error) {
+      res.status(502).json({ message: error instanceof Error ? error.message : "VitalSource discovery failed" });
+    }
+  });
+
+  // Unified DOI enrichment: Crossref establishes identity; configured providers
+  // enrich the same canonical record without silently escalating it to clinical guidance.
+  app.post("/api/hospitals/knowledge/enrich-doi", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const doi = typeof req.body?.doi === "string" ? req.body.doi : "";
+      if (!doi) return res.status(400).json({ message: "doi is required" });
+
+      const allowedProviders = new Set<DoiEnrichmentProvider>([
+        "crossref",
+        "springerNature",
+        "scienceDirect",
+        "webOfScience",
+        "ebsco",
+      ]);
+
+      let providers: DoiEnrichmentProvider[] | undefined;
+      if (Array.isArray(req.body?.providers)) {
+        providers = req.body.providers.filter(
+          (value: unknown): value is DoiEnrichmentProvider =>
+            typeof value === "string" &&
+            allowedProviders.has(value as DoiEnrichmentProvider),
+        );
+        if (!providers.length) {
+          return res.status(400).json({
+            message: "providers did not contain any supported provider names",
+            supportedProviders: [...allowedProviders],
+          });
+        }
+      }
+
+      const user = req.user as { email?: string; id?: string } | undefined;
+      const result = await enrichHospitalKnowledgeByDoi(doi, {
+        providers,
+        includeFullText: req.body?.includeFullText === true,
+        trigger: "admin_api",
+        createdBy: user?.email || user?.id || null,
+      });
+      res.status(201).json(result);
+    } catch (error) {
+      console.error("Unified DOI enrichment failed:", error);
+      res.status(502).json({
+        message: "Unified DOI enrichment failed",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/hospitals/knowledge/enrichment-runs/:id", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const run = await getHospitalKnowledgeEnrichmentRun(req.params.id);
+      if (!run) return res.status(404).json({ message: "Enrichment run not found" });
+      res.json(run);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load enrichment run" });
+    }
+  });
+
+  app.get("/api/hospitals/knowledge/:id/sources", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.json(await listHospitalKnowledgeSources(req.params.id));
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load knowledge provenance" });
+    }
+  });
+
+  // AccessiBooks multi-distribution platform.
+  app.get("/api/distributions", async (_req: Request, res: Response) => {
+    try {
+      res.json(await listAccessiBooksDistributions());
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load AccessiBooks distributions" });
+    }
+  });
+
+  app.get("/api/distributions/:code", async (req: Request, res: Response) => {
+    try {
+      const distribution = await getAccessiBooksDistribution(req.params.code);
+      if (!distribution) return res.status(404).json({ message: "Distribution not found" });
+      res.json(distribution);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to load distribution" });
+    }
+  });
+
+  app.get("/api/distributions/:code/catalogue", async (req: Request, res: Response) => {
+    try {
+      res.json(await searchDistributionCatalogue({
+        distributionCode: req.params.code,
+        q: typeof req.query.q === "string" ? req.query.q : undefined,
+        collection: typeof req.query.collection === "string" ? req.query.collection : undefined,
+        audience: typeof req.query.audience === "string" ? req.query.audience : undefined,
+        limit: typeof req.query.limit === "string" ? Number(req.query.limit) : undefined,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to search distribution catalogue";
+      res.status(message.includes("Unknown AccessiBooks distribution") ? 404 : 500).json({ message });
+    }
+  });
+
+  app.post("/api/distributions/:code/catalogue/:itemId", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      res.status(201).json(await addCatalogueItemToDistribution({
+        distributionCode: req.params.code,
+        catalogueItemId: req.params.itemId,
+        collection: typeof req.body?.collection === "string" ? req.body.collection : undefined,
+        audience: typeof req.body?.audience === "string" ? req.body.audience : undefined,
+        featured: typeof req.body?.featured === "boolean" ? req.body.featured : undefined,
+        sortRank: typeof req.body?.sortRank === "number" ? req.body.sortRank : undefined,
+        presentation: req.body?.presentation && typeof req.body.presentation === "object" ? req.body.presentation : undefined,
+        policyOverrides: req.body?.policyOverrides && typeof req.body.policyOverrides === "object" ? req.body.policyOverrides : undefined,
+      }));
+    } catch (error) {
+      res.status(400).json({ message: error instanceof Error ? error.message : "Failed to add catalogue item" });
     }
   });
 
