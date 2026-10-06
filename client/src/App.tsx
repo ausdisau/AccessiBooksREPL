@@ -37,7 +37,7 @@ import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle, Dialog
 import { AdminStoragePage } from "@/pages/admin-storage";
 import { AppLayout } from "@/components/app-layout";
 
-type View = "library" | "hospitals" | "educate" | "libraries" | "community" | "kids" | "player";
+type View = "library" | "hospitals" | "educate" | "libraries" | "community" | "kids" | "aged-care" | "rehab" | "workplace" | "justice" | "university" | "easy-read" | "professional" | "player";
 
 // Header component with user management
 function AppHeader() {
@@ -664,6 +664,13 @@ function viewFromPath(pathname: string): View {
   if (pathname === "/libraries") return "libraries";
   if (pathname === "/community") return "community";
   if (pathname === "/kids") return "kids";
+  if (pathname === "/aged-care") return "aged-care";
+  if (pathname === "/rehab") return "rehab";
+  if (pathname === "/workplace") return "workplace";
+  if (pathname === "/justice") return "justice";
+  if (pathname === "/university") return "university";
+  if (pathname === "/easy-read") return "easy-read";
+  if (pathname === "/professional") return "professional";
   return "library";
 }
 
@@ -673,6 +680,13 @@ function pathForView(view: View): string {
   if (view === "libraries") return "/libraries";
   if (view === "community") return "/community";
   if (view === "kids") return "/kids";
+  if (view === "aged-care") return "/aged-care";
+  if (view === "rehab") return "/rehab";
+  if (view === "workplace") return "/workplace";
+  if (view === "justice") return "/justice";
+  if (view === "university") return "/university";
+  if (view === "easy-read") return "/easy-read";
+  if (view === "professional") return "/professional";
   return "/";
 }
 
@@ -770,7 +784,7 @@ function MainApp() {
             >
               <HospitalCatalogue />
             </div>
-          ) : currentView === "educate" || currentView === "libraries" || currentView === "community" || currentView === "kids" ? (
+          ) : currentView === "educate" || currentView === "libraries" || currentView === "community" || currentView === "kids" || currentView === "aged-care" || currentView === "rehab" || currentView === "workplace" || currentView === "justice" || currentView === "university" || currentView === "easy-read" || currentView === "professional" ? (
             <div
               id={currentView + "-panel"}
               role="tabpanel"
@@ -811,7 +825,17 @@ function App() {
   }
 
   const publicDistribution =
-    pathname === "/educate" || pathname === "/libraries" || pathname === "/community" || pathname === "/kids"
+    pathname === "/educate" ||
+    pathname === "/libraries" ||
+    pathname === "/community" ||
+    pathname === "/kids" ||
+    pathname === "/aged-care" ||
+    pathname === "/rehab" ||
+    pathname === "/workplace" ||
+    pathname === "/justice" ||
+    pathname === "/university" ||
+    pathname === "/easy-read" ||
+    pathname === "/professional"
       ? (pathname.slice(1) as DistributionId)
       : null;
 
