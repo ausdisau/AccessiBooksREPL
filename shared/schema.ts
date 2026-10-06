@@ -172,6 +172,14 @@ export const hospitalCatalogueItems = pgTable("hospital_catalogue_items", {
   transcriptAvailable: boolean("transcript_available").notNull().default(false),
   ttsFriendly: boolean("tts_friendly").notNull().default(false),
 
+  // Accessibility claims supplied by publishers/vendors are evidence, not
+  // independent AccessiBooks conformance testing.
+  accessibilityClaims: jsonb("accessibility_claims").$type<Record<string, unknown>>().default({}),
+  accessibilityClaimsSource: varchar("accessibility_claims_source", { length: 64 }).notNull().default("none"),
+  accessibilityClaimsStatus: varchar("accessibility_claims_status", { length: 40 }).notNull().default("not_provided"),
+  accessibilityClaimsUpdatedAt: timestamp("accessibility_claims_updated_at"),
+  accessibilityTestStatus: varchar("accessibility_test_status", { length: 40 }).notNull().default("not_tested"),
+
   durationSeconds: integer("duration_seconds"),
   estimatedReadingMinutes: integer("estimated_reading_minutes"),
   isbn13: varchar("isbn13", { length: 20 }),
