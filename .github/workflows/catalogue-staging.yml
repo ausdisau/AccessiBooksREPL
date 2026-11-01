@@ -1,0 +1,41 @@
+name: AccessiBooks catalogue staging checks
+on:
+  push:
+    branches:
+      - staging/openlibrary-catalogue-20261101
+  pull_request:
+    branches:
+      - main
+permissions:
+  contents: read
+concurrency:
+  group: accessibooks-catalogue-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NODE_ENV: test
+      AMAZON_CREATORS_ENABLED: "false"
+      AMAZON_CREATORS_POLICY_APPROVED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Unit tests (catalogue adapters and Goodreads CSV)
+        run: npm run catalogue:test
+      - name: Static accessibility smoke checks
+        run: npm run staging:a11y
+      - name: TypeScript compilation
+        run: npm run check
+      - name: Full application build
+        if: success() || failure()
+        run: npm run build
+      - name: Dependency vulnerability audit
+        if: success() || failure()
+        run: npm audit --omit=dev --audit-level=high

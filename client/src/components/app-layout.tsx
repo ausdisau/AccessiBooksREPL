@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Book as BookIcon, Play } from "lucide-react";
+import { Book as BookIcon, Play, Search } from "lucide-react";
 import {
   SidebarProvider,
   Sidebar,
@@ -41,6 +41,12 @@ export function AppLayout({
               <BookIcon className="h-5 w-5" aria-hidden="true" />
               <span>Library</span>
             </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <a href="/content-discovery" className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium hover:bg-sidebar-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" aria-label="Discover books">
+              <Search className="h-5 w-5" aria-hidden="true" />
+              <span>Discover</span>
+            </a>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton

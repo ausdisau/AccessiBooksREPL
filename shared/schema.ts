@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, real, timestamp, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, real, timestamp, jsonb, index, boolean, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -122,3 +122,30 @@ export interface Progress {
   currentTime: number;
   lastPlayed: string;
 }
+
+// Metadata-only discovery index: importing does not grant playback or reuse rights.
+export const catalogueEntries = pgTable("catalogue_entries", {
+  key: text("key").primaryKey(),
+  provider: text("provider").notNull(),
+  providerId: text("provider_id").notNull(),
+  title: text("title").notNull(),
+  author: text("author").notNull().default(""),
+  language: text("language"),
+  format: text("format").notNull(),
+  record: jsonb("record").$type<Record<string, unknown>>().notNull(),
+  rightsAuStatus: text("rights_au_status").notNull().default("review-required"),
+  rightsReviewNotes: text("rights_review_notes"),
+  lastSeenAt: timestamp("last_seen_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("catalogue_entries_provider_id_unique").on(table.provider, table.providerId),
+  index("catalogue_entries_title_idx").on(table.title),
+  index("catalogue_entries_provider_idx").on(table.provider),
+]);
+
+export const catalogueSyncState = pgTable("catalogue_sync_state", {
+  provider: text("provider").primaryKey(),
+  nextCursor: text("next_cursor"),
+  processed: integer("processed").notNull().default(0),
+  completed: boolean("completed").notNull().default(false),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});

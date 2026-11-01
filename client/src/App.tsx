@@ -32,6 +32,8 @@ import { PremiumBadge } from "@/components/premium-badge";
 import { SubscriptionCard } from "@/components/subscription-card";
 import { Dialog, DialogContent, DialogTrigger, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { AdminStoragePage } from "@/pages/admin-storage";
+import ContentDiscovery from "@/pages/content-discovery";
+import AmazonBookshop from "@/pages/amazon-bookshop";
 import { AppLayout } from "@/components/app-layout";
 
 type View = "library" | "player";
@@ -51,6 +53,7 @@ function AppHeader() {
           <AccessiBooksLogo />
 
           <div className="flex items-center space-x-4">
+            <a href="/content-discovery" className="text-sm font-semibold underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">Discover</a>
             <AccessibilityControls />
             <Dialog>
               <DialogTrigger asChild>
@@ -350,6 +353,7 @@ function LandingPage() {
         <header className="flex justify-between items-center mb-10">
           <AccessiBooksLogo asHeading={false} />
           <div className="flex items-center gap-3">
+            <a href="/content-discovery" className="text-sm font-semibold underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">Discover books</a>
             <AccessibilityControls />
             <Button
               variant="outline"
@@ -761,6 +765,20 @@ function App() {
 
   if (isLoading) {
     return <Loader variant="page" message="Loading AccessiBooks…" />;
+  }
+
+  // Catalogue discovery stays independent of authentication and paid entitlements.
+  if (pathname === "/content-discovery" || pathname === "/bookshop") {
+    return (
+      <MotionConfig reducedMotion={reduceMotion}>
+        <TooltipProvider>
+          <AudioProvider>
+            {pathname === "/content-discovery" ? <ContentDiscovery /> : <AmazonBookshop />}
+            <Toaster />
+          </AudioProvider>
+        </TooltipProvider>
+      </MotionConfig>
+    );
   }
 
   if (isAuthenticated && (pathname === "/admin" || pathname === "/admin/storage")) {

@@ -13,6 +13,7 @@ import multer from "multer";
 import { db } from "./db";
 import { books } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { registerCatalogueV2Routes } from "./routes/catalogue-v2";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB
 
@@ -63,6 +64,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Session and Passport auth (login, callback, logout)
+  registerCatalogueV2Routes(app);
   await setupAuth(app);
   
   // Setup multi-provider authentication: local, Facebook, Microsoft, Auth0
