@@ -314,3 +314,4 @@ export default function ContentDiscovery() {
       </div>
     </main>
   );
+}
